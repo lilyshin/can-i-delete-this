@@ -469,6 +469,29 @@ def build_f7(dest: str) -> dict:
             "noise_sha": merge_sha}
 
 
+def build_f4(dest: str) -> dict:
+    """N10: history was squashed, so intent lives only in the PR title."""
+    repo = _init(dest, "f4")
+    target = repo / "session.py"
+    target.write_text("def touch(s):\n    s.seen_at = now()\n")
+    _commit(repo, "feat: add session touch", "2022-06-01T10:00:00")
+
+    target.write_text(
+        "def touch(s):\n"
+        "    if s.idle_seconds > 900:\n"
+        "        s.rotate_token()\n"
+        "    s.seen_at = now()\n"
+    )
+    for i in range(25):
+        (repo / "unrelated_{}.py".format(i)).write_text("x = {}\n".format(i))
+    squash_sha = _commit(
+        repo, "Rotate token on idle sessions and reformat module (#2211)",
+        "2022-07-01T10:00:00")
+
+    return {"repo": str(repo), "path": "session.py", "line": 3,
+            "real_sha": squash_sha, "pr_number": 2211, "noise_sha": squash_sha}
+
+
 def build_candidate_cap_probe(dest: str) -> dict:
     """A target line whose distinctive token also appears, one at a time,
     in three unrelated commits touching three unrelated files.

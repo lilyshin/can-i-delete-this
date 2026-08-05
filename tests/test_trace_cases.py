@@ -77,5 +77,22 @@ class TestF7Merge(CaseMixin, unittest.TestCase):
         self.assert_real_commit_found(info, result)
 
 
+class TestF4Squash(CaseMixin, unittest.TestCase):
+    builder = "build_f4"
+
+    def test_reports_why_it_came_up_empty(self):
+        info, result = self.build()
+        shas = [c["sha"] for c in result["introduction_candidates"]]
+        if info["real_sha"] in shas:
+            self.skipTest("squash commit survived filtering; nothing to explain")
+        self.assertIn("pickaxe", " ".join(result["notes"]),
+                      "when all candidates are filtered, notes must explain")
+
+    def test_pr_number_is_recoverable_from_subject(self):
+        info, result = self.build()
+        subjects = [b["subject"] for b in result["blame_candidates"]]
+        self.assertTrue(any("(#2211)" in s for s in subjects))
+
+
 if __name__ == "__main__":
     unittest.main()
