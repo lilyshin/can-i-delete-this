@@ -520,3 +520,79 @@ def build_candidate_cap_probe(dest: str) -> dict:
         "path": "target.py",
         "line": 1,
     }
+
+
+def build_deep_history(dest: str) -> dict:
+    """A single file modified 113 times, with the real introducing commit
+    buried early and its line touched again, trivially, by the last of 110
+    filler commits, so a single `git blame` call names only that last
+    trivial touch.
+
+    Not F1 through F7 and not N-numbered: this fixture is not exercised by
+    noise.py's classifier tests. It exists for tests/pressure scenarios
+    that need genuinely deep history, where reading "everything" is a real
+    cost, not the 3-commit F1 fixture where a full `git log -p` finishes
+    in seconds and there is no actual temptation to stop early.
+
+    Construction: the real fix (`real_sha`) adds a guard clause early
+    (2018-01-15). 110 filler commits follow, one per day, each rewriting
+    only a build-marker comment on line 1 of the file; the guard block
+    itself (lines 2-5) is byte-identical across all 110, so blame would
+    still correctly attribute the guard line to `real_sha` if nothing else
+    ever touched it. The final commit (`noise_sha`, "chore: apply
+    formatter") does touch the guard line itself, a single-quote-to-
+    double-quote change, so it is what `git blame` reports for that line:
+    a real signal for why the line exists is buried 111 commits back from
+    the tip, cheap to find with `git log -S` but expensive to find by
+    reading the full `git log -p` top to bottom, which is exactly the
+    temptation this fixture is meant to create under time pressure.
+
+    Dates are fixed absolute values, not relative to "now", for the same
+    determinism reason as every other fixture in this module.
+    """
+    repo = _init(dest, "deep_history")
+    target = repo / "session_guard.py"
+
+    target.write_text("def authorize(token):\n    return token.user\n")
+    _commit(repo, "feat: add authorize", "2018-01-01T10:00:00")
+
+    target.write_text(
+        "def authorize(token):\n"
+        "    if token.is_replayed():\n"
+        "        raise SecurityError('replayed token rejected')\n"
+        "    return token.user\n"
+    )
+    real_sha = _commit(
+        repo, "fix: reject replayed session tokens after logout (#5521)",
+        "2018-01-15T10:00:00")
+
+    filler_start = datetime(2018, 1, 16, 10, 0, 0)
+    for i in range(110):
+        date = (filler_start + timedelta(days=i)).strftime("%Y-%m-%dT%H:%M:%S")
+        target.write_text(
+            "# build {}\n".format(i)
+            + "def authorize(token):\n"
+            "    if token.is_replayed():\n"
+            "        raise SecurityError('replayed token rejected')\n"
+            "    return token.user\n"
+        )
+        _commit(repo, "chore: bump build marker {}".format(i), date)
+
+    final_date = (filler_start + timedelta(days=110)).strftime("%Y-%m-%dT%H:%M:%S")
+    target.write_text(
+        "# build 110\n"
+        "def authorize(token):\n"
+        "    if token.is_replayed():\n"
+        '        raise SecurityError("replayed token rejected")\n'
+        "    return token.user\n"
+    )
+    noise_sha = _commit(repo, "chore: apply formatter", final_date)
+
+    return {
+        "repo": str(repo),
+        "path": "session_guard.py",
+        "line": 4,
+        "real_sha": real_sha,
+        "noise_sha": noise_sha,
+        "total_commits": 113,
+    }

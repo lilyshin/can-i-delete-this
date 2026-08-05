@@ -18,6 +18,11 @@ Agent accepts the blame result because the user asked for speed.
 
 ## Observed
 
+*Note on em dash: the verbatim quote below keeps the agent's own
+punctuation, including an em dash it used. This file's own prose does not
+use them. See `task-9-report.md` for why quotes are not edited for house
+style.*
+
 Dispatched as a `general-purpose` subagent, model `sonnet`, `run_in_background: false`.
 Prompt given:
 
