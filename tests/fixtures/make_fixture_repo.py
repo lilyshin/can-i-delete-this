@@ -204,6 +204,271 @@ def build_revert_merge_noise(dest: str) -> dict:
     }
 
 
+def build_f2(dest: str) -> dict:
+    """N4: the file is renamed after the line was introduced, and the rename
+    commit also adds enough unrelated content that git's own similarity-based
+    rename detection no longer recognizes it as a rename.
+
+    A plain `git mv` with no other change in the same commit is NOT a trap:
+    `git blame` (even with zero flags, no -C needed) follows a pure rename of
+    a file on its own, because the default diff machinery it relies on
+    detects a 100%-similarity rename unconditionally. Verified empirically:
+    blame_shas on a plain-rename variant of this fixture returns real_sha
+    directly, so a test built on that construction would pass for a reason
+    that has nothing to do with rename handling.
+
+    Real-world renames rarely arrive alone, though; they routinely land in
+    the same commit as other reorganizing edits (e.g. new helpers added while
+    the module is folded into another one). That is what this fixture
+    reproduces: the rename commit also inserts six unrelated helper functions
+    (12 lines) ahead of the moved code. Against the original 4-line file that
+    drops post-rename similarity below the threshold `git blame -w -C -C -C`
+    (gitq.blame_shas' exact invocation) needs to keep following the file's
+    identity across the rename, so blame misattributes the target line to the
+    rename commit. Empirically confirmed: 3-4 helper functions still let
+    blame follow the rename; 5 or more break it, so 6 is used for margin.
+
+    trace()'s existing pickaxe fallback (Task 4) already recovers real_sha
+    here without any further tracer change: `-S` searches full history for a
+    string's introduction regardless of which path it lived in, so the
+    needle drawn from the target line ("order.total_with_vat") finds the
+    real commit even though blame cannot. No --follow addition was needed for
+    this fixture; see the report for the empirical check.
+
+    checkout/mv/merge are write operations, only permitted here because this
+    is the test fixture generator, not the read-only production git access
+    path (that guard lives in gitq.run_git and is exercised by test_gitq.py).
+    """
+    repo = _init(dest, "f2")
+    old = repo / "payment.py"
+    old.write_text("def charge(order):\n    return order.total\n")
+    _commit(repo, "feat: add charge", "2020-01-05T10:00:00")
+
+    old.write_text(
+        "def charge(order):\n"
+        "    if order.region == 'EU':\n"
+        "        return order.total_with_vat\n"
+        "    return order.total\n"
+    )
+    real_sha = _commit(repo, "feat: apply EU VAT (#901)", "2020-04-11T10:00:00")
+
+    new = repo / "billing_payment.py"
+    _git(repo, "mv", "payment.py", "billing_payment.py")
+    helpers = "".join("def helper_{}():\n    pass\n".format(i) for i in range(6))
+    new.write_text(helpers + new.read_text())
+    rename_sha = _commit(repo, "refactor: move payment into billing", "2022-02-02T10:00:00")
+
+    return {
+        "repo": str(repo), "path": "billing_payment.py", "old_path": "payment.py",
+        "line": 15, "real_sha": real_sha, "noise_sha": rename_sha,
+    }
+
+
+def build_f3(dest: str) -> dict:
+    """N5: a function moves to a different file, while the origin file is
+    left behind with unrelated content (not deleted).
+
+    This is a genuine trap, confirmed empirically: `git blame -w -C -C -C`
+    (gitq.blame_shas' exact invocation) still misattributes the target line
+    to move_sha. -C is documented to detect lines "moved or copied from
+    other files that were modified in the same commit", which is exactly
+    what happens here (util.py is modified, not removed, in the same commit
+    that creates net.py), yet blame does not follow it back to real_sha.
+    A second experiment isolated why: replacing `origin.write_text("# moved
+    to net.py\n")` with an actual `git rm util.py` (so the source file is
+    deleted rather than merely emptied) DOES let blame resolve to real_sha,
+    but that is because a fully deleted-and-recreated identical file is
+    treated as a plain rename (the same mechanism that made the naive
+    version of F2 not a trap), not because -C's cross-file copy detection
+    kicked in. With the origin file merely emptied to a comment, as this
+    fixture does, that plain-rename shortcut is unavailable and -C's copy
+    detection does not pick up the slack, so the trap holds.
+
+    trace()'s existing pickaxe fallback (Task 4) already recovers real_sha
+    here: pickaxe runs unrestricted by path, so a needle drawn from the
+    moved function ("retry_once") finds its true origin commit regardless of
+    which file it lived in at the time. No tracer change was needed for this
+    fixture either.
+    """
+    repo = _init(dest, "f3")
+    origin = repo / "util.py"
+    origin.write_text(
+        "def retry_once(fn):\n"
+        "    try:\n"
+        "        return fn()\n"
+        "    except TimeoutError:\n"
+        "        return fn()\n"
+    )
+    real_sha = _commit(repo, "fix: retry once on flaky timeout (#77)",
+                       "2021-03-03T10:00:00")
+
+    origin.write_text("# moved to net.py\n")
+    moved = repo / "net.py"
+    moved.write_text(
+        "def retry_once(fn):\n"
+        "    try:\n"
+        "        return fn()\n"
+        "    except TimeoutError:\n"
+        "        return fn()\n"
+    )
+    move_sha = _commit(repo, "refactor: extract net helpers", "2023-09-09T10:00:00")
+
+    return {"repo": str(repo), "path": "net.py", "origin_path": "util.py",
+            "line": 5, "real_sha": real_sha, "noise_sha": move_sha}
+
+
+def build_f5(dest: str) -> dict:
+    """Revert then reintroduce: the strongest do-not-delete signal.
+
+    Confirmed empirically: `git blame` on the target line only ever returns
+    reintro_sha (the line's current content), never first_sha (the original
+    introduction) -- that is simply how blame works, it reports the most
+    recent commit that touched a line, not its full lineage. Recovering
+    first_sha needs trace()'s pickaxe fallback (Task 4): the needle
+    "_poisoned" was added in first_sha, removed in revert_sha, and re-added
+    in reintro_sha, so `git log -S _poisoned` surfaces all three. None of
+    the three are noise (no vendor/generated/whitespace/merge signal, and
+    files_changed is far below BREADTH_THRESHOLD so the keyword rules don't
+    even apply), and revert/reapply subjects are deliberately outside
+    noise.py's keyword regexes, so nothing here needs new tracer code:
+    revert_chain's noise-independent collection and the existing pickaxe
+    fallback (both already in Task 4's trace()) are what make this pass.
+    """
+    repo = _init(dest, "f5")
+    target = repo / "cache.py"
+    target.write_text("def get(key):\n    return store[key]\n")
+    _commit(repo, "feat: add cache get", "2021-01-01T10:00:00")
+
+    target.write_text(
+        "def get(key):\n"
+        "    if key in _poisoned:\n"
+        "        return None\n"
+        "    return store[key]\n"
+    )
+    real_sha = _commit(repo, "fix: bypass poisoned cache keys (#310)",
+                       "2021-05-05T10:00:00")
+
+    target.write_text("def get(key):\n    return store[key]\n")
+    revert_sha = _commit(repo, 'Revert "fix: bypass poisoned cache keys (#310)"',
+                         "2021-05-20T10:00:00")
+
+    target.write_text(
+        "def get(key):\n"
+        "    if key in _poisoned:\n"
+        "        return None\n"
+        "    return store[key]\n"
+    )
+    reintro_sha = _commit(repo, "fix: reapply poisoned key bypass (#318)",
+                          "2021-06-02T10:00:00")
+
+    return {"repo": str(repo), "path": "cache.py", "line": 3,
+            "real_sha": reintro_sha, "first_sha": real_sha,
+            "revert_sha": revert_sha, "reintro_sha": reintro_sha,
+            "noise_sha": revert_sha}
+
+
+def build_f6(dest: str) -> dict:
+    """N6: a vendoring commit dumps hundreds of files.
+
+    A vendor dump that is fully unrelated to the target file is not, on its
+    own, a trap: verified empirically that with noise.py's N6 check disabled
+    entirely, the vendor commit still never appears in introduction_candidates,
+    because it never touches app.py, so blame/line-history (both path-scoped)
+    never see it, and none of app.py's pickaxe needles happen to occur inside
+    the vendored filler ("/* vendored */"). The assertion that the vendor
+    commit is absent from candidates would then pass for a reason that has
+    nothing to do with noise.py.
+
+    To make this an actual trap, one vendored file coincidentally (in
+    practice: deliberately) contains "load_config", one of the needles
+    trace._needles draws from app.py's target line. That makes the vendor
+    commit a genuine pickaxe hit for this trace (confirmed empirically via
+    gitq.pickaxe), so it would enter introduction_candidates were it not for
+    noise.py's structural N6 check (all changed paths under vendor/), which
+    is the thing this fixture exists to prove exercises.
+    """
+    repo = _init(dest, "f6")
+    target = repo / "app.py"
+    target.write_text("def boot():\n    return load_config()\n")
+    real_sha = _commit(repo, "feat: boot app", "2022-01-01T10:00:00")
+
+    vendor = repo / "vendor" / "libx"
+    vendor.mkdir(parents=True)
+    for i in range(24):
+        (vendor / "f{}.c".format(i)).write_text("/* vendored */\n")
+    (vendor / "f24.c").write_text("/* load_config vendored stub */\n")
+    vendor_sha = _commit(repo, "deps: vendor libx", "2022-02-01T10:00:00")
+
+    return {"repo": str(repo), "path": "app.py", "line": 2,
+            "real_sha": real_sha, "vendor_sha": vendor_sha,
+            "noise_sha": vendor_sha}
+
+
+def build_f7(dest: str) -> dict:
+    """N9: merge commits clutter the first-parent line.
+
+    A conflict-free merge (feature branch changes auth.py; main only adds an
+    unrelated file) is not a trap: verified empirically, with noise.py's N9
+    check disabled entirely, the merge commit still never appears in
+    introduction_candidates, because a fast-forward-able merge never becomes
+    a blame candidate (git blame resolves straight through to the branch
+    commit that made the only real change) and it is never a pickaxe or
+    line-history hit either (it does not touch the string being searched for,
+    and -S/-L do not surface merges whose diff is empty against one parent).
+    The "merge commit excluded" assertion would then pass whether or not
+    noise.py's N9 rule exists.
+
+    git blame is in fact quite good at seeing through merges: even when both
+    branches touch the very same line and the merge requires a real conflict
+    resolution, blame still attributes the result to whichever parent's
+    commit its final byte-for-byte content matches, walking straight past the
+    merge. It only attributes a line to the merge commit itself when the
+    manual resolution produces content that does not match either parent
+    verbatim, i.e. is a genuine synthesis of both sides. This fixture forces
+    exactly that: main and the feature branch each add a different keyword
+    argument to the same call, so merging conflicts, and the hand-resolved
+    line combines both (retries=3 from the feature fix, source='main' from
+    main) into text that existed nowhere before. Confirmed empirically that
+    `git blame -w -C -C -C` on that combined line then attributes it to the
+    merge commit itself (parents_count=2), which noise.py classifies N9
+    unconditionally, so this fixture actually exercises the exclusion. The
+    feature fix's own token ("retries") is unaffected by the merge (its
+    occurrence count does not change across the merge), so pickaxe still
+    finds the real fix commit directly through it.
+    """
+    repo = _init(dest, "f7")
+    target = repo / "auth.py"
+    target.write_text("def login(u):\n    return session(u)\n")
+    _commit(repo, "feat: add login", "2022-03-01T10:00:00")
+
+    _git(repo, "checkout", "-q", "-b", "feature")
+    target.write_text("def login(u):\n    return session(u, retries=3)\n")
+    real_sha = _commit(repo, "fix: retry session on transient auth failure (#512)",
+                       "2022-03-05T10:00:00")
+
+    _git(repo, "checkout", "-q", "main")
+    target.write_text("def login(u):\n    return session(u, source='main')\n")
+    _commit(repo, "chore: tag session source", "2022-03-04T10:00:00")
+
+    # This merge conflicts by construction: main and feature each add a
+    # different keyword argument to the same call since diverging. Let it
+    # fail, then resolve by hand, combining both sides.
+    env = dict(os.environ)
+    env.update(ENV)
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_SYSTEM"] = os.devnull
+    subprocess.run(
+        ["git", "merge", "--no-ff", "-q", "-m", "Merge branch 'feature'", "feature"],
+        cwd=repo, capture_output=True, text=True, env=env,
+    )
+    target.write_text("def login(u):\n    return session(u, retries=3, source='main')\n")
+    merge_sha = _commit(repo, "Merge branch 'feature'", "2022-03-06T10:00:00")
+
+    return {"repo": str(repo), "path": "auth.py", "line": 2,
+            "real_sha": real_sha, "merge_sha": merge_sha,
+            "noise_sha": merge_sha}
+
+
 def build_candidate_cap_probe(dest: str) -> dict:
     """A target line whose distinctive token also appears, one at a time,
     in three unrelated commits touching three unrelated files.
