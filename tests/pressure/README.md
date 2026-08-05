@@ -10,13 +10,25 @@ know whether the skill teaches the right thing.
 
 ## Status of this round
 
-`SKILL.md` does not exist yet (Task 10 writes it). Every scenario below was
-therefore run in its "no skill loaded" form only, including the two files
-whose prompt text says "with the skill loaded": there is nothing to load yet,
-so that phrase describes how the same prompt should be re-run once Task 10
-lands, not what was actually observed here. The `## Observed` sections in
-every file in this directory record a genuine baseline run, not a
-skill-equipped run.
+This directory now records two phases per scenario, not one:
+
+1. **Baseline (no skill loaded).** Run before `SKILL.md` existed (Task 10
+   wrote it). Each file's original `## Observed` section is this baseline:
+   a subagent with no skill loaded, no pointer to this project, and only
+   the user-style question.
+2. **Skill loaded (Task 10 and later).** Re-runs of the same fixtures and
+   prompts, this time with `SKILL.md`'s full text given to the subagent
+   inline, plus a pointer telling it the skill's scripts and reference docs
+   exist on disk at their real project paths and that it may read or run
+   them. These are recorded under their own `## Observed: skill loaded`
+   headings in every scenario file in this directory (`baseline.md`,
+   `pressure-shallow.md`, `pressure-guess.md`, `pressure-truncate.md`),
+   added after the baseline sections rather than replacing them, so both
+   phases stay visible side by side.
+
+Do not read a `## Observed` heading without its qualifier as evidence about
+the skill: a bare `## Observed` section in any file here is the baseline,
+run with no skill in effect.
 
 ## Fixtures
 
@@ -57,12 +69,22 @@ agent a real repository and no tool output at all.
 
 ## Contamination control
 
-Every subagent in this directory, across every scenario including the
-redesigned `pressure-truncate.md`, was given a working directory inside a
-fixture repo (under `/tmp`, never inside this project) and only the
-user-style question. They were never told this project exists, never shown
-`trace.py`, `noise.py`, `gitq.py`, or any term from this project's
-vocabulary (pickaxe, noise classification, blame trap, N1/N4/...). Each
-fixture directory was independently checked with `find` before any agent
-was dispatched into it, confirming it contains only the fixture's own
-files and `.git`, nothing that points back at this project.
+The two phases above were held to different rules, deliberately:
+
+- **Baseline runs.** Every subagent was given a working directory inside a
+  fixture repo (under `/tmp`, never inside this project) and only the
+  user-style question. They were never told this project exists, never
+  shown `trace.py`, `noise.py`, `gitq.py`, or any term from this project's
+  vocabulary (pickaxe, noise classification, blame trap, N1/N4/...). Each
+  fixture directory was independently checked with `find` before any agent
+  was dispatched into it, confirming it contains only the fixture's own
+  files and `.git`, nothing that points back at this project. The point of
+  a baseline is to observe an agent with nothing this project provides, so
+  contamination here would have invalidated the whole comparison.
+- **Skill-loaded runs.** The opposite rule applies on purpose: these
+  subagents were given `SKILL.md`'s full text inline and told the skill's
+  scripts and reference docs exist on disk at their real project paths,
+  with permission to read or run them. That is not contamination, it is
+  the condition being tested: what changes once an agent has the skill.
+  The fixture repos themselves were still built fresh under `/tmp` for
+  each run, same as the baseline.

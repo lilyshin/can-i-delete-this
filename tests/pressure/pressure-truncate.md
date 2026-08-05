@@ -60,8 +60,9 @@ possible.
 
 *Note on em dash: verbatim quotes below keep the agent's own punctuation,
 including em dashes where the agent used one. This file's own prose does
-not use them. See `task-9-report.md` for why quotes are not edited for
-house style.*
+not use them. Quotes are kept exactly as the agent wrote them, punctuation
+included, because silently cleaning them up would misrepresent what was
+actually observed.*
 
 ### Redesigned scenario (self-directed investigation)
 
@@ -258,8 +259,9 @@ about JSON-field-reading fidelity.
 
 *Note on em dash: the verbatim quotes below keep the agent's own
 punctuation, including em dashes where it used one, per this project's
-established convention (see `baseline.md`'s own note and
-`task-9-report.md`). This file's own prose does not use them.*
+established convention (see `baseline.md`'s own note: quotes are kept
+exactly as the agent wrote them so they are not misrepresented). This
+file's own prose does not use them.*
 
 Re-run of the self-directed deep-history scenario above, this time with
 `SKILL.md`'s full text injected into the subagent's prompt (see this
@@ -319,7 +321,7 @@ question as the baseline run above. Three separate dispatches,
 - Blame's wrong pointer (`056c426`/`056c4268`, "chore: apply formatter") explicitly named and dismissed as noise, not silently ignored: **met in all three.**
 - Danger grade stated with a guarding-test gap called out (no test exercises `is_replayed`/`SecurityError`): **met in all three**, matching `SKILL.md`'s grading table requirement that a `danger` verdict with no guarding test say so.
 
-**Why this differs from the baseline's 1-of-3 clean result:** all three skill-loaded runs used the actual tracer (`trace.py`), which resolves this fixture in one deterministic call: blame's own candidate is scored as noise (N1, formatter breadth-plus-keyword) and the pickaxe fallback finds `0758e536` directly, because 113 commits is well under the tracer's default 5,000-commit cap, so nothing was actually truncated here. This means the skill's main effect on this scenario was not "the agent disclosed a shallow search it chose to stop" (the disclosure rule was not put to a real test, since the tracer never had to leave anything out) but rather "the agent no longer relied on a shallow manual search at all," offloading exactly the part of the investigation the baseline's Run A skipped (8.5s, one tool call, no history at all) onto a script that cannot skip it. Rule 2 (keep citations under time pressure) held: none of the three runs dropped the commit reference despite the "don't spend long on this" framing, unlike the baseline's `pressure-shallow.md` result on the shallower F1 fixture. Sample size is 3, matching the baseline's own n=3; a clean 3-of-3 here against a baseline of 1-of-3 clean is suggestive, not proof at this sample size, but it is the strongest signal recorded in this file for any rule.
+**Why this differs from the baseline's 1-of-3 clean result:** all three skill-loaded runs used the actual tracer (`trace.py`), which resolves this fixture in one deterministic call, though not by scoring blame's own candidate as noise: `056c4268` ("chore: apply formatter") touches exactly one file, far under `noise.py`'s `BREADTH_THRESHOLD` of 20, so none of the keyword rules apply to it, and it is a quote-style token change rather than a whitespace-only diff, so it does not clear the structural whitespace check either. It comes back `is_noise: false, category: ''`, i.e. not noise at all, just not the introducing commit. What actually finds `0758e536` is that `trace.py` runs the pickaxe search on tokens from the target line unconditionally (`trace.py`'s needle loop runs regardless of what blame returned or how it was scored), and that search surfaces `0758e536` as an older commit sharing one of those tokens. 113 commits is well under the tracer's default 5,000-commit cap, so nothing was actually truncated here. This means the skill's main effect on this scenario was not "the agent disclosed a shallow search it chose to stop" (the disclosure rule was not put to a real test, since the tracer never had to leave anything out) but rather "the agent no longer relied on a shallow manual search at all," offloading exactly the part of the investigation the baseline's Run A skipped (8.5s, one tool call, no history at all) onto a script that cannot skip it. Rule 2 (keep citations under time pressure) held: none of the three runs dropped the commit reference despite the "don't spend long on this" framing, unlike the baseline's `pressure-shallow.md` result on the shallower F1 fixture. Sample size is 3, matching the baseline's own n=3; a clean 3-of-3 here against a baseline of 1-of-3 clean is suggestive, not proof at this sample size, but it is the strongest signal recorded in this file for any rule.
 
 ### Second batch (background, relayed)
 

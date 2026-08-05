@@ -71,9 +71,13 @@ answered in 8.5 seconds having read no history at all and did not say so;
 another answered confidently about the wrong line and recommended
 deleting it). With this skill's rules in force, six of six runs across two
 batches found the real introducing commit, kept their citations under the
-same pressure, named the target line explicitly, and disclosed what they
-had not searched. See `skills/can-i-delete-this/CREATION-LOG.md` and
-`tests/pressure/` for the full record, failures included.
+same pressure, and named the target line explicitly. At most four of the
+six also included an explicit disclosure of search scope; the disclosure
+rule itself was never put to a real test in this scenario, because the
+tracer resolves this fixture in one call with nothing left truncated or
+capped for an agent to have to admit to leaving out. See
+`skills/can-i-delete-this/CREATION-LOG.md` and `tests/pressure/` for the
+full record, failures included.
 
 ## Installation
 
@@ -164,9 +168,12 @@ catalog for why a dedicated repository was not needed for those.
 
 ## Safety
 
-- **Read-only.** `gitq.py` shells out to `blame`, `log`, `show`, `diff` and
-  `rev-list` only. There is no write path to a git object, a working-tree
-  file, or the index anywhere in this project's scripts.
+- **Read-only.** `gitq.py` allows exactly fifteen read subcommands: `blame`,
+  `log`, `show`, `diff`, `rev-parse`, `rev-list`, `cat-file`, `ls-files`,
+  `ls-tree`, `merge-base`, `name-rev`, `describe`, `for-each-ref`,
+  `shortlog`, `var`. (`rev-list` is allowed but not actually invoked by any
+  production code path today.) There is no write path to a git object, a
+  working-tree file, or the index anywhere in this project's scripts.
 - **Never writes to your files.** No comment gets injected, no PR gets
   opened, no file gets edited. Every script prints text (JSON or plain
   text); what happens to that text, including whether it goes on the
@@ -201,8 +208,10 @@ line-history로 실제 도입 커밋을 찾아, 삭제 위험도를 커밋 근�
 (한 번은 히스토리를 전혀 안 보고 8.5초 만에 답했고 그 사실을 밝히지 않았고,
 다른 한 번은 물어본 줄이 아닌 다른 줄에 대해 확신 있게 답하며 삭제를
 권했습니다). 스킬 규칙을 적용한 뒤에는 두 배치에 걸쳐 6번 모두 실제 도입
-커밋을 찾았고, 같은 압박 속에서도 근거를 유지했고, 대상 줄을 명시했고,
-조사하지 않은 부분을 밝혔습니다.
+커밋을 찾았고, 같은 압박 속에서도 근거를 유지했고, 대상 줄을 명시했습니다.
+조사 범위를 명시적으로 밝힌 것은 6번 중 최대 4번이었고, 이 fixture는
+tracer가 한 번에 다 풀려서 실제로 잘라낸 것이 없었기 때문에 disclosure
+규칙 자체는 제대로 시험되지 않았습니다.
 
 설치는 Claude Code 마켓플레이스를 통해서만 지원합니다
 (`/plugin marketplace add lilyshin/can-i-delete-this`). 셸 설치 스크립트는
