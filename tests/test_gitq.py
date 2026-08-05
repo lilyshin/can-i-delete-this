@@ -51,5 +51,19 @@ class TestWhitespaceOnly(unittest.TestCase):
             self.assertFalse(gitq.is_whitespace_only(info["repo"], info["real_sha"]))
 
 
+class TestBypassAttempts(unittest.TestCase):
+    def test_global_flag_before_subcommand_is_refused(self):
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["-c", "user.email=x", "commit", "--allow-empty", "-m", "x"])
+
+    def test_unknown_subcommand_is_refused(self):
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["co", "other"])
+
+    def test_config_subcommand_is_refused(self):
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["config", "user.email", "x"])
+
+
 if __name__ == "__main__":
     unittest.main()

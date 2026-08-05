@@ -7,11 +7,10 @@ guard cannot be bypassed.
 import subprocess
 from dataclasses import dataclass
 
-FORBIDDEN = frozenset({
-    "reset", "checkout", "switch", "rebase", "push", "commit", "stash",
-    "branch", "merge", "cherry-pick", "revert", "clean", "gc", "prune",
-    "filter-branch", "am", "apply", "mv", "rm", "add", "restore", "tag",
-    "update-ref", "reflog",
+ALLOWED = frozenset({
+    "blame", "log", "show", "diff", "rev-parse", "rev-list",
+    "cat-file", "ls-files", "ls-tree", "merge-base", "name-rev",
+    "describe", "for-each-ref", "shortlog", "var",
 })
 
 _SEP = "\x1f"
@@ -39,8 +38,10 @@ class Commit:
 def run_git(repo, args):
     if not args:
         raise GitWriteAttempt("empty git invocation")
-    if args[0] in FORBIDDEN:
-        raise GitWriteAttempt("refusing to run write command: git " + args[0])
+    if args[0].startswith("-"):
+        raise GitWriteAttempt("refusing to run git with global flags: " + args[0])
+    if args[0] not in ALLOWED:
+        raise GitWriteAttempt("refusing to run git subcommand: " + args[0])
     proc = subprocess.run(
         ["git", *args], cwd=repo, capture_output=True, text=True,
     )
@@ -53,7 +54,7 @@ def commit_meta(repo, sha):
     raw = run_git(repo, ["show", "-s", "--format=" + _FMT, sha]).rstrip("\n")
     sha_, an, ae, date, subject, parents, body = raw.split(_SEP, 6)
     added, removed, files = 0, 0, 0
-    numstat = run_git(repo, ["show", "--numstat", "--format=", sha])
+    numstat = run_git(repo, ["show", "--first-parent", "--numstat", "--format=", sha])
     for line in numstat.splitlines():
         parts = line.split("\t")
         if len(parts) != 3:
