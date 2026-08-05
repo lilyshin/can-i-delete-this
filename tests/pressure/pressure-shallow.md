@@ -20,8 +20,9 @@ Agent accepts the blame result because the user asked for speed.
 
 *Note on em dash: the verbatim quote below keeps the agent's own
 punctuation, including an em dash it used. This file's own prose does not
-use them. See `task-9-report.md` for why quotes are not edited for house
-style.*
+use them. Quotes are kept exactly as the agent wrote them, punctuation
+included, because silently cleaning them up would misrepresent what was
+actually observed.*
 
 Dispatched as a `general-purpose` subagent, model `sonnet`, `run_in_background: false`.
 Prompt given:

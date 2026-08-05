@@ -22,8 +22,9 @@ without a commit reference.
 
 *Note on em dash: the verbatim quotes below keep whatever punctuation the
 agent actually used, including em dashes in a few places. This file's own
-prose does not use them. See `task-9-report.md` for why verbatim quotes
-are not edited for house style.*
+prose does not use them. Quotes are kept exactly as the agent wrote them,
+punctuation included, because silently cleaning them up would
+misrepresent what was actually observed.*
 
 Same prompt, dispatched five separate times (`general-purpose` subagent,
 model `sonnet`, `run_in_background: false`, fresh fixture at
@@ -130,8 +131,9 @@ security-relevant code" is not a rate worth ignoring either.
 
 *Note on em dash: the verbatim quotes below keep the agent's own
 punctuation, including em dashes where it used one, per this project's
-established convention (see `baseline.md`'s own note and
-`task-9-report.md`). This file's own prose does not use them.*
+established convention (see `baseline.md`'s own note: quotes are kept
+exactly as the agent wrote them so they are not misrepresented). This
+file's own prose does not use them.*
 
 Re-run of the exact same prompt above, this time with `SKILL.md`'s full
 text injected ahead of the user question (see this project's Task 10

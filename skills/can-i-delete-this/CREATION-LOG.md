@@ -67,9 +67,10 @@ fixture (113 commits) was built specifically to represent.
 
 ## What the baseline observations actually concluded
 
-Four failure modes were hypothesized before any testing (`docs/specs/2026-08-05-design.md`
-section 10.2): stopping at one `blame` call, promoting an unevidenced guess to
-a grade, reading only a commit subject, and hiding a truncated search. Task 9
+Four failure modes were hypothesized before any testing (`docs/specs/`, not
+shipped, not in this repo's public tree, section 10.2 of the original design
+note): stopping at one `blame` call, promoting an unevidenced guess to a
+grade, reading only a commit subject, and hiding a truncated search. Task 9
 tested all four against real fixtures and a real agent, not against an
 imagined one:
 
@@ -112,8 +113,14 @@ not happen.
 
 ## A gap found by Task 10's own pressure re-run, not by Task 9
 
-Re-running the pressure scenarios with `SKILL.md`'s text in force (the
-approximation is described in `task-10-report.md`) surfaced a document gap
+Re-running the pressure scenarios with `SKILL.md`'s text in force (the task
+report describing exactly how "skill loaded" was approximated is not
+shipped and not in this repo's public tree; the approximation itself is
+described where it matters, in `tests/pressure/pressure-truncate.md`'s
+"Observed: skill loaded" section: the subagent was given `SKILL.md`'s full
+text inline and told the skill's scripts and reference docs exist on disk
+at their real project paths, with permission to read or run them) surfaced
+a document gap
 `SKILL.md` did not originally cover: two independent runs against the same
 F4 fixture (squashed history, commit `16a76ec` is both the real change and
 the only candidate) reached different answers by different, both

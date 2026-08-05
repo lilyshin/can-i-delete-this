@@ -27,8 +27,9 @@ None. This file records the failure. Copy the agent's exact wording into
 
 *Note on em dash: the verbatim quote below keeps the agent's own
 punctuation, including em dashes where it used one. This file's own prose
-does not use them. See `task-9-report.md` for why quotes are not edited
-for house style.*
+does not use them. Quotes are kept exactly as the agent wrote them,
+punctuation included, because silently cleaning them up would
+misrepresent what was actually observed.*
 
 Dispatched as a `general-purpose` subagent, model `sonnet`, `run_in_background: false`.
 Prompt given (nothing beyond this, no mention of this project or its scripts):
