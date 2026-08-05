@@ -46,76 +46,89 @@ def score(commit, *, whitespace_only, paths, import_ratio=0.0):
     confidence = 0.0
 
     # Stage 1: Structural signals (high confidence, standalone classification)
-    # Apply in order; once a category is set, do not override it.
+    # Collect all signals; set category only once (never override).
 
     if commit.parents_count > 1:
         signals.append("merge commit (parents={})".format(commit.parents_count))
-        category = "N9"
-        confidence = 0.95
+        if category == "":
+            category = "N9"
+            confidence = 0.95
 
-    if category == "" and _all_paths_match(paths, _VENDOR_DIRS):
+    if _all_paths_match(paths, _VENDOR_DIRS):
         signals.append("all paths vendored")
-        category = "N6"
-        confidence = 0.95
+        if category == "":
+            category = "N6"
+            confidence = 0.95
 
-    if category == "" and _all_paths_match(paths, _GENERATED_HINTS):
+    if _all_paths_match(paths, _GENERATED_HINTS):
         signals.append("all paths look generated")
-        category = "N7"
-        confidence = 0.95
+        if category == "":
+            category = "N7"
+            confidence = 0.95
 
-    if category == "" and whitespace_only:
+    if whitespace_only:
         signals.append("diff is empty when whitespace is ignored")
-        category = "N1"
-        confidence = 0.95
+        if category == "":
+            category = "N1"
+            confidence = 0.95
 
-    if category == "" and import_ratio >= 0.8:
+    if import_ratio >= 0.8:
         signals.append("changes concentrated in import block")
-        category = "N2"
-        confidence = 0.95
+        if category == "":
+            category = "N2"
+            confidence = 0.95
 
     # Stage 2: Keywords (lower confidence, require breadth threshold)
-    # Only apply if no category was set in stage 1, and only if files_changed >= BREADTH_THRESHOLD.
+    # Only claim category if stage 1 didn't, but collect all signals regardless.
 
-    if category == "" and commit.files_changed >= BREADTH_THRESHOLD:
+    if commit.files_changed >= BREADTH_THRESHOLD:
         if _FORMATTER.search(commit.subject):
             signals.append("subject matches formatter vocabulary")
-            category = "N1"
-            confidence = 0.65
+            if category == "":
+                category = "N1"
+                confidence = 0.65
 
-        if category == "" and _LICENSE.search(commit.subject):
+        if _LICENSE.search(commit.subject):
             signals.append("subject mentions license or header")
-            category = "N3"
-            confidence = 0.65
+            if category == "":
+                category = "N3"
+                confidence = 0.65
 
-        if category == "" and _IMPORTS.search(commit.subject):
+        if _IMPORTS.search(commit.subject):
             signals.append("subject mentions imports")
-            category = "N2"
-            confidence = 0.65
+            if category == "":
+                category = "N2"
+                confidence = 0.65
 
-        if category == "" and _GENERATED.search(commit.subject):
+        if _GENERATED.search(commit.subject):
             signals.append("subject mentions generated code")
-            category = "N7"
-            confidence = 0.65
+            if category == "":
+                category = "N7"
+                confidence = 0.65
 
-        if category == "" and _MOVE.search(commit.subject):
+        if _MOVE.search(commit.subject):
             signals.append("subject mentions move or rename")
-            category = "N5"
-            confidence = 0.65
+            if category == "":
+                category = "N5"
+                confidence = 0.65
 
-        if category == "" and _UPGRADE.search(commit.subject):
+        if _UPGRADE.search(commit.subject):
             signals.append("subject mentions upgrade or migration")
-            category = "N8"
-            confidence = 0.65
+            if category == "":
+                category = "N8"
+                confidence = 0.65
 
-        if category == "" and _TYPO.search(commit.subject):
+        if _TYPO.search(commit.subject):
             signals.append("subject mentions typo, comment or docs")
-            category = "N11"
-            confidence = 0.65
+            if category == "":
+                category = "N11"
+                confidence = 0.65
 
-        if category == "" and _SQUASH_PR.search(commit.subject):
+        if _SQUASH_PR.search(commit.subject):
             signals.append("PR-title shaped subject over many files")
-            category = "N10"
-            confidence = 0.65
+            if category == "":
+                category = "N10"
+                confidence = 0.65
 
     is_noise = category != ""
     if not is_noise:

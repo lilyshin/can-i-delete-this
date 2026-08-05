@@ -149,6 +149,20 @@ class TestNoiseScoring(unittest.TestCase):
                              whitespace_only=False, paths=["a.js"] * 25)
         self.assertGreater(stage1.confidence, stage2.confidence)
 
+    def test_strip_comments_in_fix_not_noise(self):
+        v = noise.score(commit(subject="fix: strip HTML comments during sanitization", files=1),
+                        whitespace_only=False, paths=["sanitizer.py"])
+        self.assertFalse(v.is_noise)
+        self.assertEqual(v.category, "")
+
+    def test_all_signals_collected_with_multiple_matches(self):
+        v = noise.score(commit(subject="chore: refactor imports", files=5, parents=2),
+                        whitespace_only=False, paths=["a.py"], import_ratio=0.95)
+        self.assertEqual(v.category, "N9")
+        self.assertIn("merge commit (parents=2)", v.signals)
+        self.assertIn("changes concentrated in import block", v.signals)
+        self.assertEqual(len(v.signals), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
