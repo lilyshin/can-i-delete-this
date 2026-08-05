@@ -69,9 +69,22 @@ def skeleton(grade, trace_data):
     """Return a fill-in-the-blank artifact for the agent to complete."""
     target = trace_data.get("target", {})
     top = _top(trace_data)
-    sha = str(top.get("sha", ""))[:7] or "unknown"
-    subject = top.get("subject", "")
-    day = str(top.get("date", ""))[:10]
+
+    # Every field below is checked with isinstance() before use, not coerced
+    # with str(). str(x) turns a missing/None date into "" or "None" and lets
+    # it leak straight into the rendered text (e.g. "// KEEP: hotfix (None,
+    # a3f8c21)"); isinstance() plus an explicit fallback keeps that from
+    # happening when introduction_candidates is empty, as it is for F4-style
+    # squash cases (see tests/test_trace_cases.py::test_reports_why_it_came_up_empty).
+    raw_sha = top.get("sha")
+    sha = raw_sha[:7] if isinstance(raw_sha, str) and raw_sha else "unknown"
+
+    raw_subject = top.get("subject")
+    subject = raw_subject if isinstance(raw_subject, str) and raw_subject else ""
+
+    raw_date = top.get("date")
+    day = raw_date[:10] if isinstance(raw_date, str) and raw_date else "date unknown"
+
     tests = _tests(trace_data)
     guard = tests[0] if tests else None
 
@@ -107,17 +120,45 @@ def skeleton(grade, trace_data):
         ])
 
     if grade == "unknown":
-        who = top.get("author") or "unknown"
-        mail = top.get("author_email") or "unknown"
-        return "\n".join([
+        raw_author = top.get("author")
+        who = raw_author if isinstance(raw_author, str) and raw_author else "unknown"
+        raw_mail = top.get("author_email")
+        mail = raw_mail if isinstance(raw_mail, str) and raw_mail else "unknown"
+
+        lines = [
             "Question about {}:{}".format(target.get("path"), target.get("start")),
             "",
             "This looks intentional but I cannot find why it was added.",
             "Closest commit: {} ({}, {})".format(sha, subject or "no subject", day),
             "Author: {} <{}>".format(who, mail),
-            "",
-            "Does anyone remember whether this is still needed?",
-        ])
+        ]
+
+        # unknown means the investigation found nothing conclusive; notes is
+        # the only place that records how far it got and where it stopped
+        # (e.g. "blame returned only noise commits; falling back to
+        # pickaxe"), so surface it instead of dropping it on the floor.
+        raw_notes = trace_data.get("notes")
+        note_lines = [n for n in (raw_notes or []) if isinstance(n, str) and n.strip()] \
+            if isinstance(raw_notes, list) else []
+        if note_lines:
+            lines.append("")
+            lines.append("Investigation notes:")
+            lines.extend("- {}".format(n) for n in note_lines)
+
+        limits = trace_data.get("limits")
+        if isinstance(limits, dict):
+            scope_flags = []
+            if limits.get("truncated"):
+                scope_flags.append("history search was truncated")
+            if limits.get("candidate_cap_reached"):
+                scope_flags.append("candidate cap was reached")
+            if scope_flags:
+                lines.append("")
+                lines.append("Search was limited: {}.".format("; ".join(scope_flags)))
+
+        lines.append("")
+        lines.append("Does anyone remember whether this is still needed?")
+        return "\n".join(lines)
 
     raise ValueError("unsupported grade: {!r}".format(grade))
 

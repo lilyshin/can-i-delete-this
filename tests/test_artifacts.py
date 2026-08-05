@@ -45,6 +45,83 @@ class TestSkeleton(unittest.TestCase):
             artifacts.skeleton("mostly-safe", TRACE)
 
 
+EMPTY_TRACE = {
+    "target": {"path": "legacy.py", "start": 10, "end": 12},
+    "introduction_candidates": [],
+    "co_changed": [],
+    "blame_candidates": [], "revert_chain": [], "notes": [],
+    "limits": {"truncated": False, "max_commits": 5000, "since": "5 years ago",
+               "candidate_cap_reached": False},
+}
+
+
+class TestEmptyTrace(unittest.TestCase):
+    """F4-style trace: introduction_candidates came up empty. Nothing should
+    leak the literal word "None" or leave a dangling ", " where a date or
+    subject was supposed to be."""
+
+    def test_no_grade_leaks_none_or_breaks_punctuation(self):
+        for grade in ("danger", "conditional", "safe", "unknown"):
+            with self.subTest(grade=grade):
+                out = artifacts.skeleton(grade, EMPTY_TRACE)
+                self.assertNotIn("None", out)
+                self.assertNotIn("(, ", out)
+
+    def test_danger_and_unknown_report_date_unknown_with_no_candidates(self):
+        for grade in ("danger", "unknown"):
+            with self.subTest(grade=grade):
+                out = artifacts.skeleton(grade, EMPTY_TRACE)
+                self.assertIn("date unknown", out)
+
+    def test_danger_skeleton_warns_with_no_candidates(self):
+        out = artifacts.skeleton("danger", EMPTY_TRACE)
+        self.assertIn("KEEP", out)
+        self.assertIn("unknown", out)
+        self.assertIn("no test guards this", out)
+
+    def test_explicit_none_date_does_not_leak(self):
+        trace_with_none_date = {
+            **TRACE,
+            "introduction_candidates": [{
+                **TRACE["introduction_candidates"][0],
+                "date": None,
+            }],
+        }
+        out = artifacts.skeleton("danger", trace_with_none_date)
+        self.assertNotIn("None", out)
+        self.assertIn("date unknown", out)
+
+    def test_explicit_none_sha_does_not_leak(self):
+        trace_with_none_sha = {
+            **TRACE,
+            "introduction_candidates": [{
+                **TRACE["introduction_candidates"][0],
+                "sha": None,
+            }],
+        }
+        out = artifacts.skeleton("danger", trace_with_none_sha)
+        self.assertNotIn("None", out)
+        self.assertIn("unknown", out)
+
+    def test_unknown_skeleton_includes_notes_and_limits(self):
+        trace_with_notes = {
+            **EMPTY_TRACE,
+            "notes": ["blame returned only noise commits; falling back to pickaxe"],
+            "limits": {"truncated": True, "max_commits": 5000, "since": "5 years ago",
+                       "candidate_cap_reached": True},
+        }
+        out = artifacts.skeleton("unknown", trace_with_notes)
+        self.assertIn("Investigation notes", out)
+        self.assertIn("blame returned only noise commits; falling back to pickaxe", out)
+        self.assertIn("history search was truncated", out)
+        self.assertIn("candidate cap was reached", out)
+
+    def test_unknown_skeleton_omits_notes_section_when_notes_empty(self):
+        out = artifacts.skeleton("unknown", EMPTY_TRACE)
+        self.assertNotIn("Investigation notes", out)
+        self.assertNotIn("Search was limited", out)
+
+
 class TestClipboard(unittest.TestCase):
     def test_uses_first_available_tool(self):
         with mock.patch.object(artifacts.shutil, "which",
