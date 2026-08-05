@@ -176,16 +176,31 @@ itself. Unit-level: `tests/test_noise.py::test_n9_merge_commit` and
 **Signals**: keyword only. `files_changed >= 20` and the subject is shaped
 like a PR title ending in `(#123)`, confidence 0.65.
 
-**Route around it**: there is no earlier commit to recover; the intent, if it
-exists anywhere, is in the PR body, the linked issue, or a code review
-comment, none of which git history contains. Say `unknown` rather than invent
-a reason git cannot show you.
+**Route around it**: N10 distrust is about the commit's *message*, not its
+*diff*. A squash commit's PR-title-shaped subject cannot be trusted to
+describe intent, but that is a reason to stop reading the subject, not a
+reason to stop looking at the commit at all. Before settling for `unknown`,
+read the noise-flagged commit's own diff:
+
+    git show <sha> -- <path>
+
+If that diff is what actually added the target lines, it is the real
+introducing commit, and you may cite it as evidence even though `noise.py`
+flagged it N10. Only when the diff itself is genuinely unrelated to the
+target lines (the noise commit really did just reformat, and the target
+lines came from somewhere else entirely) is `unknown` the honest answer; do
+not manufacture a citation out of the only remaining candidate just because
+it is the only one left. See `strategy-tree.md` step 6 for the fuller
+walkthrough of this same point.
 
 **Fixture**: F4 (`tests/test_trace_cases.py::TestF4Squash`). A single squash
 commit both rotates session tokens and reformats the module; `notes` records
 that blame returned only noise and pickaxe/line-history fall back to the same
-single commit, so `introduction_candidates` is genuinely empty and the honest
-answer is `unknown`, not a guess. Unit-level:
+single commit, so `introduction_candidates` comes up genuinely empty. That
+does not make `unknown` the right answer here: `git show 16a76ec --
+session.py` shows this exact commit adding the two target lines directly (the
+`if s.idle_seconds > 900: s.rotate_token()` guard), so the diff-reading route
+above recovers a `danger` verdict citing `16a76ec`, not `unknown`. Unit-level:
 `tests/test_noise.py::test_n10_squash_pr_with_breadth`.
 
 ## N11: Typo / comment-only edits
