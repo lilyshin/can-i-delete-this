@@ -18,10 +18,15 @@ ENV = {
 
 
 def _days_ago(days: int) -> str:
-    """A commit date `days` days before "now", so fixtures relying on
-    trace()'s default `since="5 years ago"` window stay valid no matter
-    when the test suite actually runs, instead of aging out as real
-    calendar time passes a fixed historical date.
+    """A commit date `days` days before "now".
+
+    Not used by the fixture builders below: their commit dates are fixed
+    (trace()'s default `since` is None, so there is no rolling window for
+    a fixed historical date to age out of, and fixed dates keep those
+    tests deterministic). This helper remains for tests that specifically
+    exercise an explicit, relative `since` cutoff (e.g. TestLineHistory in
+    test_gitq.py), where "N days before whenever this runs" is exactly
+    the relationship being tested.
     """
     return (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -68,30 +73,37 @@ def build_f1(dest: str) -> dict:
     BREADTH_THRESHOLD, so its "chore: apply formatter" subject is enough
     for noise.score to flag it under N1 even though the diff is no longer
     whitespace-only.
+
+    Dates are fixed (not relative to "now"): trace()'s default `since` is
+    None (no time bound at all -- an archaeology tool for old code cannot
+    default to ignoring old code), so there is no rolling window for a
+    fixed historical date to age out of, and fixed dates keep this test
+    deterministic across runs.
     """
     repo = _init(dest, "f1")
     target = repo / "payment.py"
     extra_files = [repo / "file_{:02d}.py".format(i) for i in range(24)]
 
     # The base line deliberately avoids the word "return": it is one of the
-    # target line's pickaxe needles (see _needles in trace.py), and with
-    # dates relative to "now" this base commit is within the default
-    # 5-year pickaxe window too. If it also introduced "return" it would
-    # be a second, older, non-noise pickaxe hit that outranks the real fix
-    # by date. It is also kept byte-identical across every later commit so
-    # the guard clause is a pure insertion above it, not a rewrite of it;
-    # git's line-history (-L) walks back through rewritten lines, and this
-    # fixture wants the real fix to be the line's true origin.
+    # target line's pickaxe needles (see _needles in trace.py). Since
+    # trace()'s default `since` is None, pickaxe searches full history by
+    # default with no date cutoff, so if this base commit also introduced
+    # "return" it would be a second, older, non-noise pickaxe hit that
+    # outranks the real fix by date -- this is independent of whether
+    # dates are fixed or relative. It is also kept byte-identical across
+    # every later commit so the guard clause is a pure insertion above it,
+    # not a rewrite of it; git's line-history (-L) walks back through
+    # rewritten lines, and this fixture wants the real fix to be the
+    # line's true origin.
     target.write_text(
         "def charge(order):\n"
         "    order.mark_processed()\n"
     )
     for f in extra_files:
         f.write_text("x = 'value_{}'\n".format(f.stem))
-    _commit(repo, "feat: add charge", _days_ago(730))
+    _commit(repo, "feat: add charge", "2019-01-05T10:00:00")
 
-    # The real introduction: a guard added during an incident, well over a
-    # year ago but still within the default 5-year investigation window.
+    # The real introduction: a guard added during an incident.
     target.write_text(
         "def charge(order):\n"
         "    if order.already_charged:\n"
@@ -99,7 +111,7 @@ def build_f1(dest: str) -> dict:
         "    order.mark_processed()\n"
     )
     real_sha = _commit(repo, "hotfix: prevent double charge (#4127)",
-                       _days_ago(560))
+                       "2019-11-08T02:14:00")
 
     # Noise: a repo-wide formatter flips single quotes to double quotes
     # across every file, including the target line. Token-level change,
@@ -112,7 +124,7 @@ def build_f1(dest: str) -> dict:
     )
     for f in extra_files:
         f.write_text('x = "value_{}"\n'.format(f.stem))
-    noise_sha = _commit(repo, "chore: apply formatter", _days_ago(30))
+    noise_sha = _commit(repo, "chore: apply formatter", "2023-06-01T09:00:00")
 
     return {
         "repo": str(repo),
@@ -150,18 +162,18 @@ def build_revert_merge_noise(dest: str) -> dict:
     target = repo / "feature.py"
 
     target.write_text("ENABLED_FEATURES = []\n")
-    _commit(repo, "chore: base", _days_ago(200))
+    _commit(repo, "chore: base", "2020-01-01T10:00:00")
 
     target.write_text('ENABLED_FEATURES = ["quota_guard_v2"]\n')
-    _commit(repo, "feat: real change", _days_ago(150))
+    _commit(repo, "feat: real change", "2020-03-01T10:00:00")
 
     _git(repo, "checkout", "-q", "-b", "revert-branch")
     target.write_text("ENABLED_FEATURES = []\n")
-    _commit(repo, 'Revert "feat: real change"', _days_ago(100))
+    _commit(repo, 'Revert "feat: real change"', "2020-05-01T10:00:00")
 
     _git(repo, "checkout", "-q", "main")
     target.write_text('ENABLED_FEATURES = ["quota_guard_v2", "extra_flag"]\n')
-    _commit(repo, "chore: unrelated tweak", _days_ago(120))
+    _commit(repo, "chore: unrelated tweak", "2020-04-15T10:00:00")
 
     # This merge conflicts by construction: main and revert-branch each
     # changed the same line differently since diverging. Let it fail, then
@@ -176,13 +188,13 @@ def build_revert_merge_noise(dest: str) -> dict:
         cwd=repo, capture_output=True, text=True, env=env,
     )
     target.write_text('ENABLED_FEATURES = ["extra_flag"]\n')
-    revert_sha = _commit(repo, 'Revert "feat: real change" (#9)', _days_ago(100))
+    revert_sha = _commit(repo, 'Revert "feat: real change" (#9)', "2020-05-02T10:00:00")
 
     # One further, unrelated small edit after the merge so blame's current
     # attribution for line 1 moves past the merge commit, while line-history
     # still walks through it as part of the line's full lineage.
     target.write_text('ENABLED_FEATURES = ["extra_flag", "cosmetic"]\n')
-    _commit(repo, "chore: cosmetic tweak", _days_ago(10))
+    _commit(repo, "chore: cosmetic tweak", "2020-06-01T10:00:00")
 
     return {
         "repo": str(repo),
@@ -207,12 +219,13 @@ def build_candidate_cap_probe(dest: str) -> dict:
     target = repo / "target.py"
 
     target.write_text('MAGIC = "zzz_needle_token"\n')
-    _commit(repo, "feat: add magic", _days_ago(300))
+    _commit(repo, "feat: add magic", "2019-01-01T10:00:00")
 
     for i in range(1, 4):
         other = repo / "other{}.py".format(i)
         other.write_text('X = "zzz_needle_token"\n')
-        _commit(repo, "feat: mention token in other{}".format(i), _days_ago(300 - i * 10))
+        _commit(repo, "feat: mention token in other{}".format(i),
+                "2019-01-0{}T10:00:00".format(i + 1))
 
     return {
         "repo": str(repo),

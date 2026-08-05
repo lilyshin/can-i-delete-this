@@ -49,7 +49,7 @@ def _needles(repo, path, start, end):
     return found[:5]
 
 
-def trace(repo, path, start, end, *, max_commits=5000, since="5 years ago",
+def trace(repo, path, start, end, *, max_commits=5000, since=None,
           max_candidates=200):
     notes = []
     cache = {}
@@ -162,7 +162,8 @@ def main():
     ap.add_argument("--file", required=True)
     ap.add_argument("--lines", required=True, help="START:END, e.g. 3:5")
     ap.add_argument("--max-commits", type=int, default=5000)
-    ap.add_argument("--since", default="5 years ago")
+    ap.add_argument("--since", default=None,
+                     help="e.g. '3 years ago'; unset means no time bound")
     ap.add_argument("--max-candidates", type=int, default=200)
     args = ap.parse_args()
     start, _, end = args.lines.partition(":")
