@@ -35,7 +35,10 @@ class TestCommitMeta(unittest.TestCase):
             self.assertEqual(c.author_email, "fixture@example.com")
             self.assertEqual(c.files_changed, 1)
             self.assertEqual(c.parents_count, 1)
-            self.assertTrue(c.date.startswith("2019-11-08"))
+            # F1's commit dates are relative to "now" (see make_fixture_repo)
+            # so they never age out of trace()'s default 5-year window; only
+            # the ISO-8601 shape is worth asserting here.
+            self.assertRegex(c.date, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 
 
 class TestPickaxe(unittest.TestCase):
@@ -73,6 +76,34 @@ class TestWhitespaceOnly(unittest.TestCase):
             info = make_fixture_repo.build_f1(tmp)
             self.assertFalse(gitq.is_whitespace_only(info["repo"], info["noise_sha"]))
             self.assertFalse(gitq.is_whitespace_only(info["repo"], info["real_sha"]))
+
+
+class TestLineHistory(unittest.TestCase):
+    def _build_multi_edit_repo(self, tmp):
+        repo = Path(tmp) / "line_hist"
+        repo.mkdir()
+        make_fixture_repo._git(repo, "init", "-q", "-b", "main")
+        target = repo / "a.py"
+        for i in range(3):
+            target.write_text("VALUE = {}\n".format(i))
+            make_fixture_repo._commit(repo, "chore: edit {}".format(i),
+                                       make_fixture_repo._days_ago(300 - i * 10))
+        return str(repo)
+
+    def test_max_commits_is_forwarded_to_git_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._build_multi_edit_repo(tmp)
+            unbounded = gitq.line_history(repo, "a.py", 1, 1)
+            self.assertEqual(len(unbounded), 3)
+
+            bounded = gitq.line_history(repo, "a.py", 1, 1, max_commits=1)
+            self.assertEqual(len(bounded), 1)
+
+    def test_since_is_forwarded_to_git_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._build_multi_edit_repo(tmp)
+            future_only = gitq.line_history(repo, "a.py", 1, 1, since="1 second ago")
+            self.assertEqual(future_only, [])
 
 
 class TestBypassAttempts(unittest.TestCase):

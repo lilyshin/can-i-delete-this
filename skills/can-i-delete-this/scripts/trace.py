@@ -49,7 +49,8 @@ def _needles(repo, path, start, end):
     return found[:5]
 
 
-def trace(repo, path, start, end, *, max_commits=5000, since="5 years ago"):
+def trace(repo, path, start, end, *, max_commits=5000, since="5 years ago",
+          max_candidates=200):
     notes = []
     cache = {}
     blame_candidates = []
@@ -65,12 +66,25 @@ def trace(repo, path, start, end, *, max_commits=5000, since="5 years ago"):
 
     candidates = []
     seen = set()
+    # Every sha touched by any search path (blame, pickaxe, line-history),
+    # regardless of noise verdict or the candidate cap below. revert_chain
+    # is built from this, not from `candidates`, because a revert commit
+    # must survive even when noise-filtered or capped out.
+    encountered = set(blame_shas)
+    cap_state = {"hit": False}
 
     def add(sha, why):
+        encountered.add(sha)
         if sha in seen:
             return
         _, v = _cached_meta_and_noise(repo, sha, cache)
         if v.is_noise:
+            return
+        # Blame candidates are few and the most important clue, so they
+        # are exempt from the total-candidate cap; only pickaxe/line-history
+        # additions can be capped.
+        if why != "blame" and len(candidates) >= max_candidates:
+            cap_state["hit"] = True
             return
         seen.add(sha)
         candidates.append(_describe(repo, sha, why, cache))
@@ -87,23 +101,31 @@ def trace(repo, path, start, end, *, max_commits=5000, since="5 years ago"):
             add(sha, "pickaxe")
 
     try:
-        for sha in gitq.line_history(repo, path, start, end):
+        for sha in gitq.line_history(repo, path, start, end,
+                                     max_commits=max_commits, since=since):
             add(sha, "line-history")
     except RuntimeError as exc:
         notes.append("line history unavailable: {}".format(exc))
 
     candidates.sort(key=lambda c: c["date"])
 
+    if cap_state["hit"]:
+        notes.append(
+            "introduction candidate cap ({}) reached; some pickaxe/"
+            "line-history candidates were not recorded".format(max_candidates)
+        )
+
     # A revert commit is not debris, it is the strongest do-not-delete
     # signal, so it must survive into the output even if some rule would
-    # have filtered it out as noise. Collect it from the union of blame
-    # candidates (all of them, noise or not) and accepted candidates,
-    # rather than from the filtered candidate list alone.
+    # have filtered it out as noise, or the candidate cap would have
+    # dropped it. Collect it from every sha encountered along any search
+    # path, noise or not, capped or not.
     revert_chain = []
-    for sha in seen | {b["sha"] for b in blame_candidates}:
+    for sha in encountered:
         c, _ = _cached_meta_and_noise(repo, sha, cache)
         subject_lower = c.subject.lower()
-        if subject_lower.startswith("revert") or "reapply" in subject_lower:
+        if (subject_lower.startswith("revert") or "reapply" in subject_lower
+                or "reintroduce" in subject_lower):
             revert_chain.append({
                 "sha": c.sha, "subject": c.subject, "date": c.date,
                 "author": c.author,
@@ -127,7 +149,9 @@ def trace(repo, path, start, end, *, max_commits=5000, since="5 years ago"):
         "revert_chain": revert_chain,
         "co_changed": co_changed,
         "limits": {"max_commits": max_commits, "since": since,
-                   "truncated": total > max_commits},
+                   "truncated": total > max_commits,
+                   "max_candidates": max_candidates,
+                   "candidate_cap_reached": cap_state["hit"]},
         "notes": notes,
     }
 
@@ -139,11 +163,13 @@ def main():
     ap.add_argument("--lines", required=True, help="START:END, e.g. 3:5")
     ap.add_argument("--max-commits", type=int, default=5000)
     ap.add_argument("--since", default="5 years ago")
+    ap.add_argument("--max-candidates", type=int, default=200)
     args = ap.parse_args()
     start, _, end = args.lines.partition(":")
     result = trace(
         args.repo, args.file, int(start), int(end or start),
         max_commits=args.max_commits, since=args.since,
+        max_candidates=args.max_candidates,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
 

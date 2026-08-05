@@ -4,8 +4,11 @@ Every git call in this project goes through run_git so the write-command
 guard cannot be bypassed.
 """
 
+import re
 import subprocess
 from dataclasses import dataclass
+
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 ALLOWED = frozenset({
     "blame", "log", "show", "diff", "rev-parse", "rev-list",
@@ -112,11 +115,14 @@ def pickaxe(repo, needle, path=None, max_commits=5000, since=None):
     return run_git(repo, args).split()
 
 
-def line_history(repo, path, start, end):
-    out = run_git(repo, [
-        "log", "--format=%H", "-L", "{},{}:{}".format(start, end, path),
-    ])
-    return [l for l in out.split("\n") if len(l) == 40]
+def line_history(repo, path, start, end, max_commits=None, since=None):
+    args = ["log", "--format=%H", "-L", "{},{}:{}".format(start, end, path)]
+    if max_commits:
+        args.append("--max-count={}".format(max_commits))
+    if since:
+        args.append("--since=" + since)
+    out = run_git(repo, args)
+    return [l for l in out.split("\n") if _SHA_RE.match(l)]
 
 
 def changed_paths(repo, sha):
