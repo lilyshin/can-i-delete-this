@@ -1,0 +1,26 @@
+{
+  "name": "can-i-delete-this",
+  "version": "0.1.0",
+  "description": "Answers \"can I delete this code?\" from git history.",
+  "author": { "name": "lilyshin" },
+  "homepage": "https://github.com/lilyshin/can-i-delete-this",
+  "repository": "https://github.com/lilyshin/can-i-delete-this",
+  "license": "MIT",
+  "keywords": ["git", "blame", "archaeology", "legacy-code", "refactoring"],
+  "skills": "./skills/",
+  "hooks": {},
+  "interface": {
+    "displayName": "Can I Delete This",
+    "shortDescription": "Trace why code exists and whether it is safe to remove",
+    "longDescription": "git blame tells you who touched a line last, which is rarely the question. This skill traces past formatter commits, renames, code moves and squashed history to the commit that actually introduced the code, then grades deletion risk with commit-level evidence and hands you a paste-ready next step.",
+    "developerName": "lilyshin",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read"],
+    "defaultPrompt": [
+      "Why does this line exist? Can I delete it?",
+      "git blame just shows a formatting commit. Find the real one."
+    ],
+    "websiteURL": "https://github.com/lilyshin/can-i-delete-this",
+    "brandColor": "#B42318"
+  }
+}

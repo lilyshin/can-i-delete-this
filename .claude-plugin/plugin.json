@@ -1,0 +1,11 @@
+{
+  "name": "can-i-delete-this",
+  "version": "0.1.0",
+  "description": "Answers \"can I delete this code?\" from git history. Traces past formatter commits, renames and squashes to the real introducing commit, then grades deletion risk with commit-level evidence.",
+  "author": { "name": "lilyshin" },
+  "homepage": "https://github.com/lilyshin/can-i-delete-this",
+  "repository": "https://github.com/lilyshin/can-i-delete-this",
+  "license": "MIT",
+  "keywords": ["git", "blame", "archaeology", "legacy-code", "refactoring", "pickaxe"],
+  "skills": ["./skills/"]
+}
