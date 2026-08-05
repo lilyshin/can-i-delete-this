@@ -4,6 +4,7 @@ This module writes git history and runs git commands, which is allowed for test
 fixture builders. Read-only git access is enforced in a separate module.
 """
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -16,9 +17,10 @@ ENV = {
 
 
 def _git(repo: Path, *args: str, date: str = None) -> str:
-    import os
     env = dict(os.environ)
     env.update(ENV)
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_SYSTEM"] = os.devnull
     if date:
         env["GIT_AUTHOR_DATE"] = date
         env["GIT_COMMITTER_DATE"] = date
