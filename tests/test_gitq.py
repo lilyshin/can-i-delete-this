@@ -35,10 +35,7 @@ class TestCommitMeta(unittest.TestCase):
             self.assertEqual(c.author_email, "fixture@example.com")
             self.assertEqual(c.files_changed, 1)
             self.assertEqual(c.parents_count, 1)
-            # F1's commit dates are relative to "now" (see make_fixture_repo)
-            # so they never age out of trace()'s default 5-year window; only
-            # the ISO-8601 shape is worth asserting here.
-            self.assertRegex(c.date, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+            self.assertTrue(c.date.startswith("2019-11-08"))
 
 
 class TestPickaxe(unittest.TestCase):
