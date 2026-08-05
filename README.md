@@ -154,11 +154,13 @@ down.
 | Merge commit holding a hand-resolved conflict | Two branches each add a different keyword argument to the same call; resolving the conflict combines both | The combined line matches neither parent verbatim, so blame attributes it to the merge commit itself | `build_f7`, `tests/test_trace_cases.py::TestF7Merge` |
 
 `skills/can-i-delete-this/noise-catalog.md` documents eleven noise
-categories in total (N1-N11); the seven above are the ones with a
-dedicated fixture repository behind them. The other four (import sorts,
-license headers, generated code, and language/upgrade sweeps) are covered
-at the unit level; see the catalog for why a dedicated repository was not
-needed for those.
+categories in total (N1-N11). Six of them (N1, N4, N5, N6, N9, N10) have a
+dedicated fixture repository above; the revert-then-reintroduce row is a
+distinct signal, not a noise category at all: a revert commit is a reason
+to keep something, not debris to filter past. The remaining five noise
+categories (import sorts, license headers, generated code, language/upgrade
+sweeps, and typo/comment-only edits) are covered at the unit level; see the
+catalog for why a dedicated repository was not needed for those.
 
 ## Safety
 
