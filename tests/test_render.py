@@ -111,6 +111,26 @@ class TestRender(unittest.TestCase):
         for placeholder in ["TODO", "{{", "}}", "PLACEHOLDER", "%s"]:
             self.assertNotIn(placeholder, self.html)
 
+    def test_co_changed_path_appears_when_present(self):
+        # TRACE's fixture already carries a co_changed entry for
+        # payment_test.py; the deterministic History card must show it,
+        # not only the agent's prose in the artifact.
+        self.assertIn("payment_test.py", self.html)
+        self.assertIn("Also touched in the introducing commit", self.html)
+
+    def test_co_changed_renders_nothing_when_empty(self):
+        data = json.loads(json.dumps(TRACE))
+        data["co_changed"] = []
+        html = render.render(data, VERDICT)
+        self.assertNotIn("Also touched in the introducing commit", html)
+
+    def test_co_changed_path_is_escaped(self):
+        data = json.loads(json.dumps(TRACE))
+        data["co_changed"] = [{"path": "billing & <b>payment</b>_test.py", "sha": "a" * 40}]
+        html = render.render(data, VERDICT)
+        self.assertNotIn("billing & <b>payment</b>_test.py", html)
+        self.assertIn("billing &amp; &lt;b&gt;payment&lt;/b&gt;_test.py", html)
+
 
 if __name__ == "__main__":
     unittest.main()

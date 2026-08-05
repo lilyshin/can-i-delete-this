@@ -89,7 +89,8 @@ li { margin:.15rem 0; }
         padding:.6rem .85rem; margin:.7rem 0 0; font-size:.9rem; }
 .warn:first-child { margin-top:0; }
 .hint { color:var(--muted); font-size:.85rem; margin:.4rem 0 0; }
-code { background:var(--code); border-radius:4px; padding:.05rem .3rem; }
+code { background:var(--code); border-radius:4px; padding:.05rem .3rem;
+       word-break:break-word; }
 """
 
 _JS = """
@@ -205,6 +206,24 @@ def render(trace_data, verdict_data):
     for r in trace_data.get("revert_chain", []):
         rows.append(_revert_row(r))
 
+    # co_changed is the strongest deterministic signal the strategy tree
+    # has for commit intent: what else was touched alongside the introducing
+    # commit (usually a test). artifacts.py leans on this in prose; render
+    # it here too so the page and the artifact cannot silently disagree
+    # about what test coverage exists. Rendered only when non-empty so an
+    # empty list does not read as "no coverage" noise.
+    co_changed_html = ""
+    co_changed = trace_data.get("co_changed", [])
+    if co_changed:
+        co_changed_paths = ", ".join(
+            "<code>{}</code>".format(_e(item.get("path", "")))
+            for item in co_changed
+        )
+        co_changed_html = (
+            '<p class="hint">Also touched in the introducing commit: '
+            "{}</p>".format(co_changed_paths)
+        )
+
     evidence_items = verdict_data.get("evidence", [])
     evidence = "".join(
         "<li><code>{type}</code> <code>{ref}</code>{note}</li>".format(
@@ -274,6 +293,7 @@ def render(trace_data, verdict_data):
         "<p class=\"hint\">Filled dot: where the deletion actually originated. "
         "Struck-through hollow dot: where a plain <code>git blame</code> would "
         "have pointed you instead.</p>\n"
+        "{co_changed}"
         "</div>\n"
         "<div class=\"card\"><strong>Evidence</strong><ul>{evidence}</ul></div>\n"
         "{conditions_block}\n"
@@ -301,6 +321,7 @@ def render(trace_data, verdict_data):
         bg=bg,
         label=_e(label),
         rows="".join(rows) or "<p>No history found.</p>",
+        co_changed=co_changed_html,
         evidence=evidence or "<li>none</li>",
         conditions_block=conditions_block,
         kind=_e(artifact.get("kind", "")),
