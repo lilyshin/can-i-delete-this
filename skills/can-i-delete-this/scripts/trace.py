@@ -132,11 +132,22 @@ def trace(repo, path, start, end, *, max_commits=5000, since=None,
             })
     revert_chain.sort(key=lambda c: c["date"])
 
+    # co_changed cannot be computed against "the" introducing commit here:
+    # candidates is sorted chronologically (oldest first), not by which one
+    # actually introduced the target lines -- trace.py has no way to know
+    # that, since the verdict deciding it is written after the tracer runs.
+    # So gather co-changes across every introduction candidate, tagging each
+    # entry with the sha it came from; render.py and artifacts.py can then
+    # filter down to the sha the verdict actually cites as real.
     co_changed = []
-    if candidates:
-        for p in gitq.changed_paths(repo, candidates[0]["sha"]):
+    seen_co_changed = set()
+    for cand in candidates:
+        for p in gitq.changed_paths(repo, cand["sha"]):
             if p != path:
-                co_changed.append({"path": p, "sha": candidates[0]["sha"]})
+                key = (cand["sha"], p)
+                if key not in seen_co_changed:
+                    seen_co_changed.add(key)
+                    co_changed.append({"path": p, "sha": cand["sha"]})
 
     total = len(gitq.run_git(repo, [
         "log", "--format=%H", "--max-count={}".format(max_commits + 1),

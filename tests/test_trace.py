@@ -27,7 +27,21 @@ class TestF1(unittest.TestCase):
         self.assertTrue(blamed["noise"]["is_noise"])
         self.assertEqual(blamed["noise"]["category"], "N1")
 
-    def test_real_introducing_commit_is_top_candidate(self):
+    def test_f1_real_commit_is_the_only_introduction_candidate(self):
+        # F1 is deliberately constructed (see make_fixture_repo.build_f1) so
+        # that the real fix is the *only* introduction candidate: there is
+        # no older commit sharing a pickaxe token with the target line to
+        # also surface here. That is why index 0 happens to be the real
+        # commit for this fixture specifically. It is not a general property
+        # of introduction_candidates[0]: trace.py sorts candidates
+        # chronologically, oldest first, and an older commit that merely
+        # shares a token with the target line can easily end up ahead of
+        # the real introduction in that order. See
+        # test_trace_cases.py::TestOlderTokenCollision for a fixture where
+        # that happens, and test_render_m1_m2.py / test_artifacts.py for
+        # proof that render.py and artifacts.py no longer treat position 0
+        # as meaning "real".
+        self.assertEqual(len(self.result["introduction_candidates"]), 1)
         top = self.result["introduction_candidates"][0]
         self.assertEqual(top["sha"], self.info["real_sha"])
         self.assertEqual(top["subject"], "hotfix: prevent double charge (#4127)")

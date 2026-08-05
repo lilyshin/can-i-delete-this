@@ -22,9 +22,46 @@ CLIPBOARD_TOOLS = (
 _TEST_DIR_NAMES = {"tests", "test", "spec", "specs", "__tests__"}
 
 
-def _top(trace_data):
+def _commit_refs(evidence):
+    """Lowercased, non-empty commit refs cited as evidence in the verdict."""
+    refs = []
+    for item in evidence or []:
+        if not isinstance(item, dict) or item.get("type") != "commit":
+            continue
+        ref = item.get("ref")
+        if isinstance(ref, str) and ref.strip():
+            refs.append(ref.strip().lower())
+    return refs
+
+
+def _cited_as_real(sha, refs):
+    sha = str(sha or "").lower()
+    if not sha:
+        return False
+    return any(sha.startswith(ref) for ref in refs if ref)
+
+
+def _top(trace_data, evidence=None):
+    """Pick the introduction candidate the artifact should describe.
+
+    introduction_candidates is sorted chronologically by trace.py, oldest
+    first; the oldest candidate is not necessarily the real introduction
+    (an older commit can share a pickaxe token with the target line without
+    being the commit that put it there). The verdict's own evidence is what
+    actually names the real commit, so prefer a candidate whose sha matches
+    a `commit` entry in `evidence`. Only when nothing matches (no evidence
+    passed, or none of it matches any candidate) fall back to the oldest
+    candidate, same as before this function knew about the verdict.
+    """
     cands = trace_data.get("introduction_candidates") or []
-    return cands[0] if cands else {}
+    if not cands:
+        return {}
+    refs = _commit_refs(evidence)
+    if refs:
+        for c in cands:
+            if _cited_as_real(c.get("sha"), refs):
+                return c
+    return cands[0]
 
 
 def _is_test_path(path):
@@ -60,15 +97,32 @@ def _is_test_path(path):
     return False
 
 
-def _tests(trace_data):
+def _tests(trace_data, real_sha=None):
+    """Co-changed test paths, restricted to the commit the artifact is about.
+
+    trace.py now records co_changed across every introduction candidate, not
+    just one, because it cannot itself tell which one is real (see _top).
+    Without this filter a test added alongside a different, uncited
+    candidate could be misreported as guarding the commit this artifact
+    names. When `real_sha` is None (no candidate was resolved at all),
+    nothing is attributed to anything, so no entries match.
+    """
     return [c["path"] for c in trace_data.get("co_changed", [])
-            if _is_test_path(c["path"])]
+            if _is_test_path(c["path"]) and real_sha is not None
+            and c.get("sha") == real_sha]
 
 
-def skeleton(grade, trace_data):
-    """Return a fill-in-the-blank artifact for the agent to complete."""
+def skeleton(grade, trace_data, evidence=None):
+    """Return a fill-in-the-blank artifact for the agent to complete.
+
+    `evidence` is the verdict's own `evidence` list (commit/pr/issue/test
+    entries). Passing it lets `_top` prefer the candidate the verdict
+    actually cites over the chronologically-oldest one; see `_top`'s
+    docstring. It is optional and defaults to None so existing callers that
+    have not been updated keep the previous (oldest-candidate) behavior.
+    """
     target = trace_data.get("target", {})
-    top = _top(trace_data)
+    top = _top(trace_data, evidence)
 
     # Every field below is checked with isinstance() before use, not coerced
     # with str(). str(x) turns a missing/None date into "" or "None" and lets
@@ -85,7 +139,7 @@ def skeleton(grade, trace_data):
     raw_date = top.get("date")
     day = raw_date[:10] if isinstance(raw_date, str) and raw_date else "date unknown"
 
-    tests = _tests(trace_data)
+    tests = _tests(trace_data, raw_sha if isinstance(raw_sha, str) and raw_sha else None)
     guard = tests[0] if tests else None
 
     if grade == "danger":
@@ -189,7 +243,8 @@ def main():
         t = json.load(fh)
     with open(args.verdict, encoding="utf-8") as fh:
         v = json.load(fh)
-    content = v.get("artifact", {}).get("content") or skeleton(v.get("grade", "unknown"), t)
+    content = v.get("artifact", {}).get("content") or skeleton(
+        v.get("grade", "unknown"), t, v.get("evidence"))
     print(content)
     if args.copy:
         tool = to_clipboard(content)

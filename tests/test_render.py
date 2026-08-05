@@ -126,7 +126,13 @@ class TestRender(unittest.TestCase):
 
     def test_co_changed_path_is_escaped(self):
         data = json.loads(json.dumps(TRACE))
-        data["co_changed"] = [{"path": "billing & <b>payment</b>_test.py", "sha": "a" * 40}]
+        # sha must match the candidate the verdict's evidence cites (VERDICT
+        # references "a3f8c21", which prefix-matches TRACE's introduction
+        # candidate sha below) or render() now filters this entry out as
+        # belonging to an uncited candidate; see test_render_m1_m2.py for
+        # the regression test that pins that filtering behavior directly.
+        data["co_changed"] = [{"path": "billing & <b>payment</b>_test.py",
+                                "sha": "a3f8c21" + "0" * 33}]
         html = render.render(data, VERDICT)
         self.assertNotIn("billing & <b>payment</b>_test.py", html)
         self.assertIn("billing &amp; &lt;b&gt;payment&lt;/b&gt;_test.py", html)

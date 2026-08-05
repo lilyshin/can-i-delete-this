@@ -4,11 +4,26 @@ No CDN, no fonts, no libraries. The timeline is flexbox and borders so the
 page renders identically offline and in both colour schemes.
 
 The whole point of the page is to make "blame pointed at the wrong commit"
-visible at a glance: noise commits from blame_candidates are rendered
-greyed-out and struck through with the noise category that disqualified
-them, while the real introducing commit from introduction_candidates is
-rendered bold, coloured, and first. A reader should not need to read any
-prose to see which commit is the answer and which one git blame lied about.
+visible at a glance. But trace.py cannot know which candidate is real (the
+verdict deciding that is written after the tracer runs), so this module
+takes its cue from the verdict's own evidence, not from list position or
+list membership alone:
+
+- An `introduction_candidates` entry renders bold and coloured, tagged
+  "real introduction", only when its sha matches a `commit` entry in
+  `verdict["evidence"]` (matched on prefix, since evidence refs are usually
+  short shas). Every other introduction candidate renders as a plain row:
+  it survived noise filtering, but the verdict did not cite it.
+- A `blame_candidates` entry renders greyed-out and struck through, with
+  the noise category that disqualified it, only when `noise.is_noise` is
+  true. A blame candidate that scored as not-noise (this happens: breadth
+  or whitespace checks can clear a commit that still is not the real
+  introduction) renders as a plain row instead, never struck through.
+
+A reader should not need to read any prose to see which commit is the
+answer and which one git blame lied about, but this module also must not
+present a guess as fact: a candidate with no evidence behind it is neither
+bold nor crossed out.
 """
 
 import argparse
@@ -144,6 +159,59 @@ def _real_row(candidate):
     )
 
 
+def _plain_row(candidate, *, show_why=False):
+    """A candidate that is neither the verdict's cited real introduction
+    nor scored as noise: found along the way, cited by nothing.
+    """
+    why = candidate.get("why", "")
+    why_label = _WHY_LABEL.get(why, why)
+    meta_html = ""
+    if show_why:
+        meta_html = '<div class="meta">{author} &lt;{email}&gt; &middot; {why}</div>'.format(
+            author=_e(candidate.get("author", "")),
+            email=_e(candidate.get("author_email", "")),
+            why=_e(why_label),
+        )
+    return (
+        '<div class="row">'
+        '<span class="date">{date}</span>'
+        '<span class="dot">&#9675;</span>'
+        '<span class="entry">'
+        '<span class="subject">{sha} {subject}</span>'
+        '{meta}'
+        '</span></div>'
+    ).format(
+        date=_day(candidate.get("date")),
+        sha=_short(candidate.get("sha", "")),
+        subject=_e(candidate.get("subject", "")),
+        meta=meta_html,
+    )
+
+
+def _commit_refs(verdict_data):
+    """Lowercased, non-empty commit refs cited as evidence in the verdict."""
+    refs = []
+    for item in verdict_data.get("evidence", []) or []:
+        if not isinstance(item, dict) or item.get("type") != "commit":
+            continue
+        ref = item.get("ref")
+        if isinstance(ref, str) and ref.strip():
+            refs.append(ref.strip().lower())
+    return refs
+
+
+def _cited_as_real(sha, refs):
+    """True when `sha` matches one of the verdict's cited commit refs.
+
+    Refs are usually short shas, so the match is a prefix match on the
+    full sha, not equality.
+    """
+    sha = str(sha or "").lower()
+    if not sha:
+        return False
+    return any(sha.startswith(ref) for ref in refs if ref)
+
+
 def _noise_row(candidate):
     noise = candidate.get("noise", {})
     category = noise.get("category")
@@ -195,14 +263,31 @@ def render(trace_data, verdict_data):
     target = trace_data.get("target", {})
     limits = trace_data.get("limits", {})
 
+    # Which shas the verdict actually cites as the real introduction. This,
+    # not list position and not "found via blame", is what decides the bold
+    # tag below: trace.py sorts introduction_candidates chronologically, and
+    # chronological order is not "which one is real" (see M2 in the final
+    # fix report). Only the agent's own verdict knows that.
+    commit_refs = _commit_refs(verdict_data)
+    real_shas = {
+        c.get("sha") for c in trace_data.get("introduction_candidates", [])
+        if _cited_as_real(c.get("sha"), commit_refs)
+    }
+
     # Order matters for the argument: the real introducing commit(s) lead
-    # the timeline, then the noise commits blame actually pointed at, then
-    # any revert chain. This is not chronological; it is rhetorical.
+    # the timeline, then whatever blame actually pointed at, then any revert
+    # chain. This is not chronological; it is rhetorical.
     rows = []
     for c in trace_data.get("introduction_candidates", []):
-        rows.append(_real_row(c))
+        if c.get("sha") in real_shas:
+            rows.append(_real_row(c))
+        else:
+            rows.append(_plain_row(c, show_why=True))
     for b in trace_data.get("blame_candidates", []):
-        rows.append(_noise_row(b))
+        if b.get("noise", {}).get("is_noise"):
+            rows.append(_noise_row(b))
+        else:
+            rows.append(_plain_row(b, show_why=False))
     for r in trace_data.get("revert_chain", []):
         rows.append(_revert_row(r))
 
@@ -210,10 +295,15 @@ def render(trace_data, verdict_data):
     # has for commit intent: what else was touched alongside the introducing
     # commit (usually a test). artifacts.py leans on this in prose; render
     # it here too so the page and the artifact cannot silently disagree
-    # about what test coverage exists. Rendered only when non-empty so an
-    # empty list does not read as "no coverage" noise.
+    # about what test coverage exists. trace.py now records co_changed
+    # across every introduction candidate (each entry tagged with the sha
+    # it came from), because the tracer itself cannot tell which one is
+    # real; only show the entries whose sha is the one this page just
+    # labeled real. Rendered only when non-empty so an empty list does not
+    # read as "no coverage" noise.
     co_changed_html = ""
-    co_changed = trace_data.get("co_changed", [])
+    co_changed = [item for item in trace_data.get("co_changed", [])
+                  if item.get("sha") in real_shas]
     if co_changed:
         co_changed_paths = ", ".join(
             "<code>{}</code>".format(_e(item.get("path", "")))
@@ -229,7 +319,7 @@ def render(trace_data, verdict_data):
         "<li><code>{type}</code> <code>{ref}</code>{note}</li>".format(
             type=_e(e.get("type", "")),
             ref=_e(e.get("ref", "")),
-            note=" &mdash; {}".format(_e(e.get("note"))) if e.get("note") else "",
+            note=" ({})".format(_e(e.get("note"))) if e.get("note") else "",
         )
         for e in evidence_items
     )
@@ -290,9 +380,11 @@ def render(trace_data, verdict_data):
         "<div class=\"card\">\n"
         "<strong>History: blame vs. the real introduction</strong>\n"
         "<div class=\"timeline\">{rows}</div>\n"
-        "<p class=\"hint\">Filled dot: where the deletion actually originated. "
-        "Struck-through hollow dot: where a plain <code>git blame</code> would "
-        "have pointed you instead.</p>\n"
+        "<p class=\"hint\">Filled dot: the commit the verdict cites as the real "
+        "introduction. Struck-through hollow dot: a commit scored as noise, "
+        "including whatever plain <code>git blame</code> would have pointed you "
+        "to if it was flagged noise. Plain hollow dot: a candidate this search "
+        "found that was neither cited as real nor scored as noise.</p>\n"
         "{co_changed}"
         "</div>\n"
         "<div class=\"card\"><strong>Evidence</strong><ul>{evidence}</ul></div>\n"
