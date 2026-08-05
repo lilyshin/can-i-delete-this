@@ -5,10 +5,13 @@
 Initial release.
 
 - Read-only git layer (`gitq.py`): blame, pickaxe, line-history, rename-follow.
-- Noise classifier (`noise.py`) covering eleven debris categories (N1-N11):
-  formatter/linter sweeps, import sorts, license headers, renames, code
-  moves, vendoring, generated code, upgrade sweeps, merge commits, squash
-  history, typo/comment-only edits. See `skills/can-i-delete-this/noise-catalog.md`.
+- Noise classifier (`noise.py`) covering ten debris categories (N1-N3,
+  N5-N11; N4, file move/rename, is documented in the catalog but is not a
+  `noise.py` classifier category, since `git blame`'s own similarity
+  detection handles it): formatter/linter sweeps, import sorts, license
+  headers, code moves, vendoring, generated code, upgrade sweeps, merge
+  commits, squash history, typo/comment-only edits. See
+  `skills/can-i-delete-this/noise-catalog.md`.
 - Strategy-tree tracer (`trace.py`) that falls back from `blame` to pickaxe
   and line-history search when blame's candidate is noise or empty.
 - Verdict schema and validator (`verdict.py`): four grades

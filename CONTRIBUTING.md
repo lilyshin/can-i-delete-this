@@ -13,8 +13,11 @@
   project's own untested assumptions turned out to be wrong once a fixture
   was built.
 - **This skill never writes to the user's repository.** `gitq.py` only runs
-  read-only git subcommands (`blame`, `log`, `show`, `diff`, `rev-list`).
-  Do not add a write path, and do not add `Write` to any plugin manifest's
+  read-only git subcommands: `blame`, `log`, `show`, `diff`, `rev-parse`,
+  `rev-list`, `cat-file`, `ls-files`, `ls-tree`, `merge-base`, `name-rev`,
+  `describe`, `for-each-ref`, `shortlog`, `var` (`rev-list` is allowed but
+  not actually called by any production code path today). Do not add a
+  write path, and do not add `Write` to any plugin manifest's
   `capabilities`.
 - **No em dash characters** in any file. Use a comma, a period, or
   parentheses instead.

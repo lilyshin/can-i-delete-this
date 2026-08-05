@@ -24,6 +24,14 @@ class TestMetadata(unittest.TestCase):
         self.assertEqual(data["skills"], "./skills/")
         self.assertIn("displayName", data["interface"])
 
+    def test_codex_plugin_capabilities_do_not_include_write(self):
+        # CONTRIBUTING.md states this project never writes to the user's
+        # repository and that no plugin manifest's `capabilities` may
+        # include `Write`; nothing enforced that until this test.
+        data = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text())
+        capabilities = data["interface"]["capabilities"]
+        self.assertNotIn("Write", capabilities)
+
     def test_skill_frontmatter_has_name_and_description_only(self):
         text = (ROOT / "skills" / NAME / "SKILL.md").read_text()
         self.assertTrue(text.startswith("---\n"))
