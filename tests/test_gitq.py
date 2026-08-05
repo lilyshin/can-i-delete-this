@@ -9,6 +9,9 @@ import make_fixture_repo
 import gitq
 
 
+_TEST_TMPDIR = tempfile.gettempdir()
+
+
 class TestReadOnlyGuard(unittest.TestCase):
     def test_write_commands_are_refused(self):
         for cmd in ["reset", "checkout", "rebase", "push", "commit",
@@ -63,6 +66,20 @@ class TestBypassAttempts(unittest.TestCase):
     def test_config_subcommand_is_refused(self):
         with self.assertRaises(gitq.GitWriteAttempt):
             gitq.run_git("/tmp", ["config", "user.email", "x"])
+
+    def test_output_flag_in_log_is_refused(self):
+        output_file = str(Path(_TEST_TMPDIR) / "should-not-exist-cidt")
+        Path(output_file).unlink(missing_ok=True)
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["log", "-1", "--output=" + output_file])
+        self.assertFalse(Path(output_file).exists(), "File should not be created when write flag is blocked")
+
+    def test_output_flag_in_diff_is_refused(self):
+        output_file = str(Path(_TEST_TMPDIR) / "should-not-exist-cidt2")
+        Path(output_file).unlink(missing_ok=True)
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["diff", "--output=" + output_file, "HEAD", "HEAD"])
+        self.assertFalse(Path(output_file).exists(), "File should not be created when write flag is blocked")
 
 
 if __name__ == "__main__":

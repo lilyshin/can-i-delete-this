@@ -13,6 +13,16 @@ ALLOWED = frozenset({
     "describe", "for-each-ref", "shortlog", "var",
 })
 
+WRITE_FLAG_PREFIXES = (
+    "--output",
+    "--textconv",
+    "--ext-diff",
+    "--exec",
+    "--upload-pack",
+    "--receive-pack",
+    "--open-files-in-pager",
+)
+
 _SEP = "\x1f"
 _FMT = _SEP.join(["%H", "%an", "%ae", "%aI", "%s", "%P", "%b"])
 
@@ -42,6 +52,10 @@ def run_git(repo, args):
         raise GitWriteAttempt("refusing to run git with global flags: " + args[0])
     if args[0] not in ALLOWED:
         raise GitWriteAttempt("refusing to run git subcommand: " + args[0])
+    for arg in args:
+        for prefix in WRITE_FLAG_PREFIXES:
+            if arg.startswith(prefix):
+                raise GitWriteAttempt("refusing to run git with write flag: " + arg)
     proc = subprocess.run(
         ["git", *args], cwd=repo, capture_output=True, text=True,
     )
