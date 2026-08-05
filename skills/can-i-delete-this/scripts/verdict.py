@@ -27,9 +27,9 @@ def validate(v):
     if grade not in GRADES:
         raise VerdictError("grade must be one of {}, got {!r}".format(GRADES, grade))
 
-    summary = v.get("summary") or ""
-    if not summary.strip():
-        raise VerdictError("summary must not be empty")
+    summary = v.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        raise VerdictError("summary must be a non-empty string")
 
     evidence = v.get("evidence")
     if not isinstance(evidence, list):
@@ -39,8 +39,9 @@ def validate(v):
             raise VerdictError("each evidence item must be an object")
         if item.get("type") not in EVIDENCE_TYPES:
             raise VerdictError("evidence type must be one of {}".format(EVIDENCE_TYPES))
-        if not str(item.get("ref", "")).strip():
-            raise VerdictError("evidence item needs a ref")
+        ref = item.get("ref")
+        if not isinstance(ref, str) or not ref.strip():
+            raise VerdictError("evidence item needs a non-empty string ref")
 
     if grade != "unknown":
         if not evidence:
@@ -63,8 +64,9 @@ def validate(v):
     if artifact.get("kind") != expected:
         raise VerdictError("grade {!r} expects artifact kind {!r}, got {!r}".format(
             grade, expected, artifact.get("kind")))
-    if not str(artifact.get("content", "")).strip():
-        raise VerdictError("artifact content must not be empty")
+    content = artifact.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise VerdictError("artifact content must be a non-empty string")
 
 
 def main():
@@ -81,6 +83,9 @@ def main():
         validate(data)
     except VerdictError as exc:
         print("INVALID: {}".format(exc), file=sys.stderr)
+        raise SystemExit(1)
+    except Exception as exc:
+        print("INVALID: unexpected error: {}".format(exc), file=sys.stderr)
         raise SystemExit(1)
     print("valid")
 

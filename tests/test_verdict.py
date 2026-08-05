@@ -65,6 +65,83 @@ class TestValidate(unittest.TestCase):
         with self.assertRaises(verdict.VerdictError):
             verdict.validate(ok_verdict(summary="   "))
 
+    def test_rejects_falsy_ref_values(self):
+        """Reject ref that is 0, False, or other falsy non-string values."""
+        falsy_values = [0, False, None, [], {}]
+        for val in falsy_values:
+            with self.subTest(ref_value=val):
+                with self.assertRaises(verdict.VerdictError):
+                    verdict.validate(ok_verdict(evidence=[
+                        {"type": "commit", "ref": val, "note": "test"},
+                    ]))
+
+    def test_rejects_non_string_ref(self):
+        """Reject ref that is a non-string type even if truthy."""
+        truthy_values = [42, True, 3.14, [], [0], {}, {"x": 1}]
+        for val in truthy_values:
+            with self.subTest(ref_value=val):
+                with self.assertRaises(verdict.VerdictError):
+                    verdict.validate(ok_verdict(evidence=[
+                        {"type": "commit", "ref": val, "note": "test"},
+                    ]))
+
+    def test_rejects_falsy_content_values(self):
+        """Reject artifact content that is 0, False, None, or other falsy values."""
+        falsy_values = [0, False, None, [], {}]
+        for val in falsy_values:
+            with self.subTest(content_value=val):
+                with self.assertRaises(verdict.VerdictError):
+                    verdict.validate(ok_verdict(artifact={
+                        "kind": "keep-comment", "content": val
+                    }))
+
+    def test_rejects_non_string_content(self):
+        """Reject artifact content that is a non-string type even if truthy."""
+        truthy_values = [42, True, 3.14, [], [0], {}, {"x": 1}]
+        for val in truthy_values:
+            with self.subTest(content_value=val):
+                with self.assertRaises(verdict.VerdictError):
+                    verdict.validate(ok_verdict(artifact={
+                        "kind": "keep-comment", "content": val
+                    }))
+
+    def test_rejects_non_string_summary(self):
+        """Reject summary that is not a string, even if truthy."""
+        non_strings = [42, True, 3.14, None, [], {}, [0], {"x": 1}]
+        for val in non_strings:
+            with self.subTest(summary_value=val):
+                with self.assertRaises(verdict.VerdictError):
+                    verdict.validate(ok_verdict(summary=val))
+
+    def test_evidence_item_missing_type_key(self):
+        """Reject evidence item that lacks type key."""
+        with self.assertRaises(verdict.VerdictError):
+            verdict.validate(ok_verdict(evidence=[
+                {"ref": "abc123", "note": "missing type key"},
+            ]))
+
+    def test_evidence_item_with_non_string_type(self):
+        """Reject evidence where type is not a string."""
+        with self.assertRaises(verdict.VerdictError):
+            verdict.validate(ok_verdict(evidence=[
+                {"type": 42, "ref": "abc123", "note": "type is number"},
+            ]))
+
+    def test_artifact_kind_as_non_string(self):
+        """Reject artifact.kind that is not a string."""
+        with self.assertRaises(verdict.VerdictError):
+            verdict.validate(ok_verdict(artifact={
+                "kind": 42, "content": "test"
+            }))
+
+    def test_artifact_kind_mismatch_with_wrong_type(self):
+        """Reject when artifact.kind is non-string (can't match expected)."""
+        with self.assertRaises(verdict.VerdictError):
+            verdict.validate(ok_verdict(
+                grade="safe",
+                artifact={"kind": None, "content": "test"}
+            ))
+
 
 if __name__ == "__main__":
     unittest.main()
