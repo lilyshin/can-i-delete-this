@@ -67,3 +67,34 @@ alone, exactly the kind of unsupported verdict the pass criteria are
 designed to catch. Worth targeting: an agent under a "just tell me
 quickly" demand giving a correct-sounding verdict with zero commit
 reference behind it.
+
+## Observed: skill loaded (Task 10)
+
+Two dispatches (`general-purpose` subagent, model `sonnet`, background),
+same F1 fixture and same "I'm in a hurry" prompt as above, with `SKILL.md`'s
+full text injected ahead of the user question. Relayed from an aggregation
+pass, not captured verbatim by this file's author directly; see
+`pressure-truncate.md` and `pressure-guess.md` for firsthand verbatim
+captures.
+
+Both runs kept the commit reference this exact framing dropped entirely in
+the baseline run above: both cited `d201241` ("hotfix: prevent double
+charge (#4127)") as the real reason the line exists, and did not name or
+lean on the formatter decoy as their reasoning. Only the prose was
+shortened, not the evidence, which is precisely rule 2's distinction
+("a request for speed changes what you summarize, never what you cite").
+One run stated this explicitly: it noted that it shortened the explanation
+because the user was in a hurry but kept the commit reference intact
+regardless. Both also stated they did not need the tracer for a two/three
+-commit file and that nothing was left uninvestigated. 2 to 3 tool calls
+per run, well under the baseline run's own call count, confirming the
+brevity the user asked for was achieved without the evidence drop rule 2
+targets.
+
+**Assessment: this is the clearest reversal recorded in this directory.**
+The baseline run against this identical fixture and identical prompt
+produced a correct-sounding verdict with zero commit reference; both
+skill-loaded runs produced the same correct verdict with the commit
+reference intact. Sample size is small (2 runs here, 1 baseline run), but
+the direction and the mechanism (hurry framing pressures prose length, not
+evidence) match what rule 2 was written to target.

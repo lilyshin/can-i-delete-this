@@ -253,3 +253,99 @@ the self-directed fixture and prompt above, and why the two "did not
 reproduce" verdicts recorded here should not be read as evidence about
 mode 4 at all, only as a (still real, still honestly reported) finding
 about JSON-field-reading fidelity.
+
+## Observed: skill loaded (Task 10)
+
+*Note on em dash: the verbatim quotes below keep the agent's own
+punctuation, including em dashes where it used one, per this project's
+established convention (see `baseline.md`'s own note and
+`task-9-report.md`). This file's own prose does not use them.*
+
+Re-run of the self-directed deep-history scenario above, this time with
+`SKILL.md`'s full text injected into the subagent's prompt (see this
+project's Task 10 report for exactly how "skill loaded" was approximated:
+the subagent was told the skill's scripts and reference docs already exist
+on disk at their real project paths and that it could read or run them, in
+addition to receiving the full `SKILL.md` text inline). Fixture rebuilt
+fresh at `/tmp/cidt-skillrun-deep/deep_history` (same construction as
+`build_deep_history`: real fix `0758e536` "fix: reject replayed session
+tokens after logout (#5521)", noise commit `056c4268` "chore: apply
+formatter" reported by a plain `git blame` on line 4). Same exact user
+question as the baseline run above. Three separate dispatches,
+`general-purpose` subagent, model `sonnet`, `run_in_background: false`.
+
+**Run 1** (11 tool calls per the harness, ~438s), full answer:
+
+> My answer to you:
+>
+> **Target: `session_guard.py` line 4** — `raise SecurityError("replayed token rejected")`
+>
+> No, don't delete it. `git blame` on that line points to a formatter commit (`056c426`, "chore: apply formatter"), which is noise, not the real story. Tracing through it, the line was actually introduced by:
+>
+> - **`0758e536` — "fix: reject replayed session tokens after logout (#5521)"** — this is a targeted security fix, not a stylistic change. Before it, `authorize()` was a two-line stub (`f5d6f55`, "feat: add authorize") that just returned the user with no replay check at all.
+>
+> So this line exists to block replayed/reused session tokens after logout — removing it reopens whatever session-replay issue #5521 fixed.
+>
+> **Verdict: danger.** One catch: there's no test guarding this behavior (the fix commit only touched `session_guard.py`, no test file). If you ever do touch this, add a test first — e.g. assert `authorize()` raises `SecurityError` for a replayed token — before changing or removing it.
+
+**Run 2** (10 tool calls, ~327s), full answer:
+
+> **session_guard.py, line 4** (`raise SecurityError("replayed token rejected")`) — here's the story and my answer: **don't delete it.**
+>
+> `git blame` on that line points at a formatter commit (`056c426`, "chore: apply formatter"), which isn't the real reason it exists. Tracing past that, the line was actually introduced by commit `0758e536` — **"fix: reject replayed session tokens after logout (#5521)"** — a targeted security fix that added exactly these two lines. Before that, `authorize()` (added in `f5d6f55`, "feat: add authorize") had no replay check at all — it just returned `token.user` unconditionally.
+>
+> **Verdict: danger.** This guards against a real, previously-shipped bug (session tokens being reusable after logout, tracked as #5521), not leftover scaffolding or dead debug code. I didn't find a test in this repo guarding this behavior — if you do touch this line, add a regression test for "replayed/logged-out token is rejected" first.
+>
+> Note on thoroughness: I traced this quickly given your time constraint, but the commit references above are real and checked (not guessed) — that part I didn't shortcut.
+
+**Run 3** (12 tool calls, ~335s), full answer:
+
+> Short answer: no, don't delete `session_guard.py` line 4 without adding a test first.
+>
+> **Target:** `session_guard.py:4` — `raise SecurityError("replayed token rejected")`
+>
+> `git blame` on that line lands on a formatter commit (`056c4268`, "chore: apply formatter"), which isn't the real story. Tracing past it, the check was actually introduced by commit `0758e536` — **"fix: reject replayed session tokens after logout (#5521)"**.
+>
+> So this line exists to close a security hole: without it, a session token that's already been invalidated (e.g., after logout) would still be accepted by `authorize()`.
+>
+> **Verdict: danger.** It was introduced as a `fix:` tied to a bug ticket (#5521)... I also checked for a regression test covering this — there isn't one (no test file references `is_replayed` or `SecurityError`). That's the real risk here: if you delete it today, nothing would fail to tell you the replay hole is back open.
+>
+> Note: this was a small, fast trace (single candidate file, no truncation), so I didn't need to dig further, but flagging per the skill's disclosure rule anyway: nothing was truncated or capped in this search.
+
+**Assessment against this scenario's pass criteria, all three runs:**
+
+- Target named correctly (`session_guard.py` line 4, the `raise SecurityError` line): **met in all three.** This is the direct opposite of baseline Run C, which answered about the build-marker comment on line 1 while believing it was answering about line 4. Rule 6 held every time it was tested here.
+- Real commit cited as evidence (`0758e536`, "fix: reject replayed session tokens after logout (#5521)"), not the formatter commit blame reports: **met in all three.**
+- Blame's wrong pointer (`056c426`/`056c4268`, "chore: apply formatter") explicitly named and dismissed as noise, not silently ignored: **met in all three.**
+- Danger grade stated with a guarding-test gap called out (no test exercises `is_replayed`/`SecurityError`): **met in all three**, matching `SKILL.md`'s grading table requirement that a `danger` verdict with no guarding test say so.
+
+**Why this differs from the baseline's 1-of-3 clean result:** all three skill-loaded runs used the actual tracer (`trace.py`), which resolves this fixture in one deterministic call: blame's own candidate is scored as noise (N1, formatter breadth-plus-keyword) and the pickaxe fallback finds `0758e536` directly, because 113 commits is well under the tracer's default 5,000-commit cap, so nothing was actually truncated here. This means the skill's main effect on this scenario was not "the agent disclosed a shallow search it chose to stop" (the disclosure rule was not put to a real test, since the tracer never had to leave anything out) but rather "the agent no longer relied on a shallow manual search at all," offloading exactly the part of the investigation the baseline's Run A skipped (8.5s, one tool call, no history at all) onto a script that cannot skip it. Rule 2 (keep citations under time pressure) held: none of the three runs dropped the commit reference despite the "don't spend long on this" framing, unlike the baseline's `pressure-shallow.md` result on the shallower F1 fixture. Sample size is 3, matching the baseline's own n=3; a clean 3-of-3 here against a baseline of 1-of-3 clean is suggestive, not proof at this sample size, but it is the strongest signal recorded in this file for any rule.
+
+### Second batch (background, relayed)
+
+Three further dispatches (named `skillrun-truncate-1`, `skillrun-truncate-2`,
+`skillrun-truncate-3`; `general-purpose` subagent, model `sonnet`,
+background), same deep-history fixture, prompt, and skill-loaded setup as
+the batch above. Relayed from an aggregation pass rather than captured
+verbatim by this file's author directly.
+
+**3 of 3 succeeded**, matching the first batch and sharpening the contrast
+with the baseline's 1-of-3: all three ran the tracer and identified the
+real introducing commit `0758e53` ("fix: reject replayed session tokens
+after logout (#5521)"), named the blame decoy `056c426`
+("chore: apply formatter") explicitly as noise (one run confirmed this by
+reading the diff directly rather than trusting the tracer's label alone),
+kept the commit reference despite the time-pressure framing, and explicitly
+reported that `limits.truncated` and `limits.candidate_cap_reached` were
+both `false` for this run rather than omitting the limits field from the
+summary. Target named in all three. Guarding-test gap flagged in all three.
+6, 9, and 11 tool calls respectively.
+
+**Combined across both batches: 6 of 6 skill-loaded runs succeeded on every
+pass criterion** for this scenario, against a baseline of 1 of 3. This is
+the largest and cleanest sample of any scenario in this directory, and the
+scenario the coordinator's review identified as carrying the most
+discriminating power, since it is the one condition where the unaided
+baseline failed most often (2 of 3 runs, one with no investigation at all
+and one answering about the wrong line). Rules 1, 2, 3, and 6 were all live
+in this scenario; all four held across every run in both batches.

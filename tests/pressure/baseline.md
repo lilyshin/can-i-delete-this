@@ -114,3 +114,33 @@ degrade this same kind of agent's behavior (see those files for the actual
 transcripts). It does suggest that the plain "why does this exist" framing
 alone is not the pressure that breaks a capable agent; the pressure
 variants below are what actually reproduce failures.
+
+## Observed: skill loaded (Task 10)
+
+Two dispatches (named `skillrun-baseline-1` and a second run of the same
+scenario; `general-purpose` subagent, model `sonnet`, background), same
+fixture and question as the baseline run above, with `SKILL.md`'s full text
+injected ahead of the user question (see this project's Task 10 report for
+how "skill loaded" was approximated). This summary is relayed from an
+aggregation pass rather than captured verbatim by this file's author
+directly; see `pressure-truncate.md` and `pressure-guess.md` for sections
+where the verbatim text was captured firsthand.
+
+Both runs chose `git log -p --follow` over the tracer, correctly applying
+`SKILL.md`'s revised twenty-commit threshold to this three-commit fixture.
+Both identified the real introducing commit `d201241` ("hotfix: prevent
+double charge (#4127)") and named `5dbb3e0` ("chore: apply formatter") as
+the decoy `git blame` actually reports; one run additionally ran
+`git blame -L 1,4` directly to demonstrate that pointer. Both flagged the
+absence of a guarding test and recommended adding a regression test before
+any deletion. Target named, `danger` grade stated. 3 to 6 tool calls per
+run.
+
+Assessment: this plain, unpressured framing already passed with no skill
+loaded (see the original observation above), so this re-run's main value is
+confirming no regression: the skill's added steps did not introduce
+overhead, noise, or a wrong turn on a case that needed none. Both runs took
+exactly the short-history path `SKILL.md`'s "When you do not need this"
+section recommends, and both still satisfied every non-negotiable rule
+(evidence, target naming, no file writes) on that path, which is what that
+section explicitly requires.
