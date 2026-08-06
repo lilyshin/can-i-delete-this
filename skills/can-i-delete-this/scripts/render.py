@@ -497,8 +497,8 @@ def write_report(trace_data, verdict_data, *, outdir=None):
 
 def main():
     ap = argparse.ArgumentParser(description="Render a can-i-delete-this report.")
-    ap.add_argument("--trace", required=True, help="path to trace.json (Task 4 output)")
-    ap.add_argument("--verdict", required=True, help="path to verdict.json (Task 6 output)")
+    ap.add_argument("--trace", required=True, help="path to trace.json (trace.py's output)")
+    ap.add_argument("--verdict", required=True, help="path to verdict.json (the verdict you wrote and validated)")
     ap.add_argument("--outdir", default=None, help="directory to write the report into "
                     "(defaults to the system temp directory)")
     args = ap.parse_args()

@@ -228,7 +228,7 @@ def build_f2(dest: str) -> dict:
     rename commit. Empirically confirmed: 3-4 helper functions still let
     blame follow the rename; 5 or more break it, so 6 is used for margin.
 
-    trace()'s existing pickaxe fallback (Task 4) already recovers real_sha
+    trace()'s existing pickaxe fallback already recovers real_sha
     here without any further tracer change: `-S` searches full history for a
     string's introduction regardless of which path it lived in, so the
     needle drawn from the target line ("order.total_with_vat") finds the
@@ -284,7 +284,7 @@ def build_f3(dest: str) -> dict:
     fixture does, that plain-rename shortcut is unavailable and -C's copy
     detection does not pick up the slack, so the trap holds.
 
-    trace()'s existing pickaxe fallback (Task 4) already recovers real_sha
+    trace()'s existing pickaxe fallback already recovers real_sha
     here: pickaxe runs unrestricted by path, so a needle drawn from the
     moved function ("retry_once") finds its true origin commit regardless of
     which file it lived in at the time. No tracer change was needed for this
@@ -324,7 +324,7 @@ def build_f5(dest: str) -> dict:
     reintro_sha (the line's current content), never first_sha (the original
     introduction) -- that is simply how blame works, it reports the most
     recent commit that touched a line, not its full lineage. Recovering
-    first_sha needs trace()'s pickaxe fallback (Task 4): the needle
+    first_sha needs trace()'s pickaxe fallback: the needle
     "_poisoned" was added in first_sha, removed in revert_sha, and re-added
     in reintro_sha, so `git log -S _poisoned` surfaces all three. None of
     the three are noise (no vendor/generated/whitespace/merge signal, and
@@ -332,7 +332,7 @@ def build_f5(dest: str) -> dict:
     even apply), and revert/reapply subjects are deliberately outside
     noise.py's keyword regexes, so nothing here needs new tracer code:
     revert_chain's noise-independent collection and the existing pickaxe
-    fallback (both already in Task 4's trace()) are what make this pass.
+    fallback (both already in trace()) are what make this pass.
     """
     repo = _init(dest, "f5")
     target = repo / "cache.py"

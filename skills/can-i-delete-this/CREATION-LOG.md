@@ -38,13 +38,13 @@ This skill packages that technique, not a new capability.
 
 ### Correction 1: `git blame -w` already defeats whitespace formatters on its own
 
-The original F1 fixture (Task 1) was a formatter commit that only changed
-indentation and blank lines. Once `gitq.py`'s blame invocation existed
-(Task 2), the fixture stopped being a trap: `blame -C -C -C` alone (no `-w`)
+The original F1 fixture was a formatter commit that only changed
+indentation and blank lines. Once `gitq.py`'s blame invocation existed,
+the fixture stopped being a trap: `blame -C -C -C` alone (no `-w`)
 still returned the formatter commit, but `blame -w -C -C -C`, the invocation
 this project actually ships, resolved straight through it to the real
 introducing commit. The problem the fixture was built to catch was one git
-had already solved. F1 was redesigned (Task 4) around a token-level
+had already solved. F1 was redesigned around a token-level
 formatter instead, one that unifies quote style across the codebase, which
 survives whitespace-ignoring diff because it is a content change, not a
 whitespace change. That is the fixture this project ships today. Lesson:
@@ -53,7 +53,7 @@ because the tool may have already grown past the trap you designed.
 
 ### Correction 2: small histories do not need this skill at all
 
-Task 9's baseline testing ran an unaided agent, no skill loaded, against the
+The first round of baseline testing ran an unaided agent, no skill loaded, against the
 corrected F1 fixture (three commits total) with the plain question "why
 does this line exist, can I delete it." It used `git blame` and
 `git log --oneline --all`, correctly separated the 2023 formatter commit
@@ -70,9 +70,9 @@ fixture (113 commits) was built specifically to represent.
 Four failure modes were hypothesized before any testing (`docs/specs/`, not
 shipped, not in this repo's public tree, section 10.2 of the original design
 note): stopping at one `blame` call, promoting an unevidenced guess to a
-grade, reading only a commit subject, and hiding a truncated search. Task 9
-tested all four against real fixtures and a real agent, not against an
-imagined one:
+grade, reading only a commit subject, and hiding a truncated search. That
+first round of baseline testing tested all four against real fixtures and
+a real agent, not against an imagined one:
 
 1. **Stop at one `blame` call, read only the subject.** Did not reproduce on
    the plain "why does this exist" framing (`baseline.md`): the agent ran
@@ -111,7 +111,7 @@ and are load-bearing for different reasons (safety and UX, not observed
 agent error). Nothing in `SKILL.md` targets failure mode 1, because it did
 not happen.
 
-## A gap found by Task 10's own pressure re-run, not by Task 9
+## A gap found by a later pressure re-run, not by the original baseline round
 
 Re-running the pressure scenarios with `SKILL.md`'s text in force (the task
 report describing exactly how "skill loaded" was approximated is not
