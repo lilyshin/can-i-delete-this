@@ -62,6 +62,14 @@ _WHY_LABEL = {
     "follow": "found via rename-follow",
 }
 
+# History rows at or below this count render flat, exactly as before this
+# collapsing feature existed (the fixtures and small repos this project is
+# tested against). Above it, rows the verdict does not cite as real, that
+# blame did not point at, and that are not part of a revert chain fold into
+# a collapsed <details> so the reader is not asked to skim hundreds of
+# dates before reaching the badge's answer.
+_HISTORY_COLLAPSE_THRESHOLD = 12
+
 _CSS = """
 :root { color-scheme: light dark; --bg:#ffffff; --fg:#101828; --muted:#667085;
         --line:#e4e7ec; --card:#f9fafb; --code:#f2f4f7; --accent:#6941c6;
@@ -116,12 +124,29 @@ button { font:inherit; font-size:.85rem; cursor:pointer; border:1px solid var(--
 button:hover { border-color:var(--accent); }
 ul { margin:.4rem 0 0; padding-left:1.2rem; }
 li { margin:.15rem 0; }
+ul.checklist { list-style:none; padding-left:0; }
+ul.checklist li { position:relative; padding-left:1.7rem; margin:.4rem 0; }
+ul.checklist li::before { content:"\2610"; position:absolute; left:0; top:0;
+                          color:var(--accent); font-size:1rem; line-height:1.4; }
 .warn { color:var(--danger); background:var(--danger-bg); border-radius:8px;
         padding:.6rem .85rem; margin:.7rem 0 0; font-size:.9rem; }
 .warn:first-child { margin-top:0; }
 .hint { color:var(--muted); font-size:.85rem; margin:.4rem 0 0; }
 code { background:var(--code); border-radius:4px; padding:.05rem .3rem;
        word-break:break-word; }
+details.history-more { margin-top:.5rem; }
+details.history-more > summary { cursor:pointer; color:var(--muted); font-size:.85rem;
+                                  padding:.5rem .1rem; list-style:none;
+                                  display:flex; align-items:center; gap:.4rem;
+                                  border-radius:6px; }
+details.history-more > summary::-webkit-details-marker { display:none; }
+details.history-more > summary::before { content:"\25B8"; display:inline-block;
+                                          font-size:.75rem; transition:transform .12s; }
+details.history-more[open] > summary::before { content:"\25BE"; }
+details.history-more > summary:hover { color:var(--fg); }
+details.history-more > summary:focus-visible { outline:2px solid var(--accent);
+                                                outline-offset:2px; }
+details.history-more > .timeline { margin-top:.3rem; }
 """
 
 _JS = """
@@ -314,32 +339,63 @@ def render(trace_data, verdict_data):
     # revert_chain (build_f5's reintro commit is exactly this -- its
     # subject contains "reapply"). Without this guard the same row would
     # repeat under a second, and sometimes a third, tag.
+    #
+    # Each row is tagged `always` so the History section below can decide
+    # what stays visible outside a collapsed <details> and what is folded
+    # into "other candidates": the verdict's cited real commit(s), every
+    # blame_candidates entry (that is what plain `git blame` pointed at,
+    # the reader needs to see it whether it turned out real, noise, or
+    # neither), and the revert chain are always shown; everything else
+    # (pickaxe/line-history hits that are neither cited nor part of blame's
+    # own output) is what gets collapsed when the timeline is long.
+    revert_shas = {r.get("sha") for r in trace_data.get("revert_chain", [])}
     rows = []
     rendered = set()
     for c in trace_data.get("introduction_candidates", []):
         sha = c.get("sha")
         rendered.add(sha)
+        always = sha in real_shas or sha in blame_by_sha or sha in revert_shas
         if sha in real_shas:
-            rows.append(_real_row(c, noise=blame_by_sha.get(sha, {}).get("noise")))
+            row_html = _real_row(c, noise=blame_by_sha.get(sha, {}).get("noise"))
         else:
-            rows.append(_plain_row(c, show_why=True))
+            row_html = _plain_row(c, show_why=True)
+        rows.append((always, row_html))
     for b in trace_data.get("blame_candidates", []):
         sha = b.get("sha")
         if sha in rendered:
             continue
         rendered.add(sha)
         if sha in real_shas:
-            rows.append(_real_row(b, noise=b.get("noise")))
+            row_html = _real_row(b, noise=b.get("noise"))
         elif b.get("noise", {}).get("is_noise"):
-            rows.append(_noise_row(b))
+            row_html = _noise_row(b)
         else:
-            rows.append(_plain_row(b, show_why=False))
+            row_html = _plain_row(b, show_why=False)
+        rows.append((True, row_html))  # every blame_candidates row is always visible
     for r in trace_data.get("revert_chain", []):
         sha = r.get("sha")
         if sha in rendered:
             continue
         rendered.add(sha)
-        rows.append(_revert_row(r))
+        rows.append((True, _revert_row(r)))  # revert chain is always visible
+
+    always_rows = [h for always, h in rows if always]
+    other_rows = [h for always, h in rows if not always]
+    if len(rows) > _HISTORY_COLLAPSE_THRESHOLD and other_rows:
+        other_count = len(other_rows)
+        rows_html = "".join(always_rows) + (
+            '<details class="history-more">'
+            '<summary>Other candidates from the search '
+            '({count} commit{plural})</summary>'
+            '<div class="timeline">{other}</div>'
+            '</details>'
+        ).format(
+            count=_e(other_count),
+            plural="" if other_count == 1 else "s",
+            other="".join(other_rows),
+        )
+    else:
+        rows_html = "".join(h for _, h in rows)
 
     # co_changed is the strongest deterministic signal the strategy tree
     # has for commit intent: what else was touched alongside the introducing
@@ -374,11 +430,15 @@ def render(trace_data, verdict_data):
         for e in evidence_items
     )
 
+    # A `conditional` verdict's conditions are things to verify before
+    # deleting, not prose to skim, so they render as a checklist (a ballot
+    # box glyph per item via CSS) rather than a plain bulleted list.
     conditions = verdict_data.get("conditions", [])
     conditions_block = ""
     if conditions:
         conditions_block = (
-            '<div class="card"><strong>Conditions</strong><ul>{}</ul></div>'.format(
+            '<div class="card"><strong>Conditions</strong>'
+            '<ul class="checklist">{}</ul></div>'.format(
                 "".join("<li>{}</li>".format(_e(c)) for c in conditions)
             )
         )
@@ -425,8 +485,15 @@ def render(trace_data, verdict_data):
         "<body>\n"
         "<main>\n"
         "<h1><span class=\"path\">{path}</span> line {line_range}</h1>\n"
-        "<p class=\"sub\">{summary}</p>\n"
         "<div class=\"badge\" style=\"color:{fg};background:{bg}\">{label}</div>\n"
+        "<p class=\"sub\">{summary}</p>\n"
+        "{conditions_block}\n"
+        "<div class=\"card\"><strong>Evidence</strong><ul>{evidence}</ul></div>\n"
+        "<div class=\"card\">\n"
+        "<button type=\"button\" data-copy=\"artifact\">Copy</button>\n"
+        "<strong>Next step ({kind})</strong>\n"
+        "<pre id=\"artifact\">{artifact}</pre>\n"
+        "</div>\n"
         "<div class=\"card\">\n"
         "<strong>History: blame vs. the real introduction</strong>\n"
         "<div class=\"timeline\">{rows}</div>\n"
@@ -443,13 +510,6 @@ def render(trace_data, verdict_data):
         "of noise scoring or citation, because reverted-then-reapplied code is "
         "the strongest do-not-delete signal this tool has.</p>\n"
         "{co_changed}"
-        "</div>\n"
-        "<div class=\"card\"><strong>Evidence</strong><ul>{evidence}</ul></div>\n"
-        "{conditions_block}\n"
-        "<div class=\"card\">\n"
-        "<button type=\"button\" data-copy=\"artifact\">Copy</button>\n"
-        "<strong>Next step ({kind})</strong>\n"
-        "<pre id=\"artifact\">{artifact}</pre>\n"
         "</div>\n"
         "<div class=\"card\">\n"
         "<strong>Notes and limits</strong>\n"
@@ -469,7 +529,7 @@ def render(trace_data, verdict_data):
         fg=fg,
         bg=bg,
         label=_e(label),
-        rows="".join(rows) or "<p>No history found.</p>",
+        rows=rows_html or "<p>No history found.</p>",
         co_changed=co_changed_html,
         evidence=evidence or "<li>none</li>",
         conditions_block=conditions_block,
