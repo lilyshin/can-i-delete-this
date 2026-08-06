@@ -4,6 +4,7 @@ Every git call in this project goes through run_git so the write-command
 guard cannot be bypassed.
 """
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -24,7 +25,69 @@ WRITE_FLAG_PREFIXES = (
     "--upload-pack",
     "--receive-pack",
     "--open-files-in-pager",
+    # Short form of --open-files-in-pager for `git grep`: launches
+    # core.pager/$GIT_PAGER as a real subprocess with matched file paths
+    # as arguments, confirmed by direct experiment against this project's
+    # own read-only guard, unlike ordinary pager use it is not gated by
+    # whether stdout is a terminal. `-O` is also the order-file flag for
+    # `git log`/`git diff` (a read-only feature this project never uses),
+    # so blocking it there too costs nothing. Prefix match, not equality:
+    # git accepts an attached value (`-Ovim`, `-O/path/to/orderfile`).
+    "-O",
 )
+
+# Config forced onto every invocation this module makes, regardless of
+# subcommand or what the caller passed, on top of the WRITE_FLAG_PREFIXES
+# checks above:
+#   core.pager=cat: closes the *config* half of the `-O` exec vector (a
+#   hostile repo's own committed-or-local config, not just the ambient
+#   environment, can set core.pager). `-c` on the command line overrides
+#   repo-local config. It does not override a `GIT_PAGER` environment
+#   variable, though (confirmed empirically: env wins over `-c
+#   core.pager`), which is why _SAFE_ENV_OVERRIDES below also forces
+#   GIT_PAGER; the two together close both the config and the environment
+#   route to the same vector.
+#   diff.external=: no production call in this module renders an actual
+#   diff body today (every diff/show call below uses --numstat/--name-only,
+#   confirmed by direct experiment to never consult diff.external
+#   regardless of its value), so this is pre-emptive, not a fix for a
+#   currently reachable path. Forcing it to empty is a no-op for those
+#   calls; it would make a *future* diff-rendering call that forgets
+#   `--no-ext-diff` fail loudly with a git error instead of silently
+#   executing whatever a repo's own config names.
+_SAFE_GIT_CONFIG = ("-c", "core.pager=cat", "-c", "diff.external=")
+
+# Environment overrides applied to every git subprocess this module spawns,
+# alongside _SAFE_GIT_CONFIG above. Each of these names a program git will
+# execute on our behalf under some condition; none of those conditions are
+# ones this read-only query layer ever wants satisfied.
+#   GIT_PAGER, PAGER: see _SAFE_GIT_CONFIG's core.pager note. GIT_PAGER
+#   wins over both core.pager and PAGER when set; PAGER is git's fallback
+#   when neither GIT_PAGER nor core.pager is configured at all.
+#   GIT_EXTERNAL_DIFF: the environment-variable twin of diff.external;
+#   same reasoning as _SAFE_GIT_CONFIG's entry for it.
+#   GIT_EDITOR, GIT_SEQUENCE_EDITOR: this project never runs a git command
+#   that should open an editor, but a hostile repo's config (core.editor)
+#   or the ambient environment could still try to make one of the
+#   subcommands here launch one.
+#   GIT_ASKPASS, SSH_ASKPASS: would let git exec a credential-prompt
+#   program; moot with no network access anywhere in this project, cheap
+#   insurance to force off regardless.
+# GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM are deliberately NOT overridden
+# here: respecting the caller's own git config when reading the caller's
+# own repository is an intentional design choice for this module, the
+# opposite of the fixture builders in tests/fixtures/make_fixture_repo.py,
+# which set those two to os.devnull for a different reason entirely
+# (deterministic throwaway test repos, not attacker-controlled ones).
+_SAFE_ENV_OVERRIDES = {
+    "GIT_PAGER": "cat",
+    "PAGER": "cat",
+    "GIT_EXTERNAL_DIFF": "",
+    "GIT_EDITOR": "true",
+    "GIT_SEQUENCE_EDITOR": "true",
+    "GIT_ASKPASS": "true",
+    "SSH_ASKPASS": "true",
+}
 
 # The one, narrow, known-safe exception to "args[0] may not start with a
 # dash": `-c core.quotepath=off` so non-ASCII paths come back as real UTF-8
@@ -77,8 +140,11 @@ def run_git(repo, args, ok_returncodes=(0,)):
         for prefix in WRITE_FLAG_PREFIXES:
             if arg.startswith(prefix):
                 raise GitWriteAttempt("refusing to run git with write flag: " + arg)
+    env = dict(os.environ)
+    env.update(_SAFE_ENV_OVERRIDES)
     proc = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True,
+        ["git", *_SAFE_GIT_CONFIG, *args], cwd=repo, capture_output=True, text=True,
+        env=env,
     )
     if proc.returncode not in ok_returncodes:
         raise RuntimeError("git " + " ".join(args) + " failed: " + proc.stderr.strip())

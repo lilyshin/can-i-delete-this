@@ -20,6 +20,23 @@
   searches the working tree only, used to judge needle rarity). Do not add a
   write path, and do not add `Write` to any plugin manifest's
   `capabilities`.
+- **A denylisted flag is not the only guard against a git subprocess
+  running an external program on our behalf.** `WRITE_FLAG_PREFIXES`
+  refuses known write-adjacent flags (including short forms, e.g. `-O` for
+  `--open-files-in-pager`), but `run_git` also forces `-c core.pager=cat`,
+  `-c diff.external=`, and a set of environment variables
+  (`GIT_PAGER`/`PAGER`/`GIT_EXTERNAL_DIFF`/`GIT_EDITOR`/
+  `GIT_SEQUENCE_EDITOR`/`GIT_ASKPASS`/`SSH_ASKPASS`) onto every invocation,
+  so that a repo's own config or the ambient environment cannot name a
+  program to exec even through a flag this project has not thought of. If
+  you add a new subcommand or flag to `gitq.py`, check by hand (or ask:
+  "does git ever launch an external program for this, via a flag, a
+  config key, or an environment variable, regardless of whether stdout is
+  a terminal?") before assuming the existing guards cover it, the way
+  `-O` did not until this was found. Never add `GIT_CONFIG_GLOBAL` or
+  `GIT_CONFIG_SYSTEM` to the environment overrides: respecting the
+  caller's own git config when reading the caller's own repository is
+  intentional.
 - **No em dash characters** in any file. Use a comma, a period, or
   parentheses instead.
 

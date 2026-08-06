@@ -192,10 +192,23 @@ account of what this means for `introduction_candidates` in practice.
   `shortlog`, `var`, `grep`. (`rev-list` is allowed but not actually invoked
   by any production code path today. `grep` searches the working tree, used
   only to judge whether a candidate pickaxe needle is too common to be a
-  useful signal; its own historical write-adjacent risk,
-  `--open-files-in-pager`, is refused the same way every other subcommand's
-  is, by `WRITE_FLAG_PREFIXES`.) There is no write path to a git object, a
-  working-tree file, or the index anywhere in this project's scripts.
+  useful signal.) There is no write path to a git object, a working-tree
+  file, or the index anywhere in this project's scripts.
+- **Every git subprocess runs with a sanitized config and environment,**
+  not just a flag denylist. `git grep`'s `-O`/`--open-files-in-pager`
+  (launches `core.pager`/`$GIT_PAGER` as a real program, with matched file
+  paths as arguments, regardless of whether output is going to a
+  terminal) is refused outright by `WRITE_FLAG_PREFIXES`, but a flag list
+  only catches flags this project has thought of. So every invocation also
+  forces `-c core.pager=cat` and `-c diff.external=` on the command line,
+  and overrides `GIT_PAGER`, `PAGER`, `GIT_EXTERNAL_DIFF`, `GIT_EDITOR`,
+  `GIT_SEQUENCE_EDITOR`, `GIT_ASKPASS`, and `SSH_ASKPASS` in the
+  subprocess environment, so that even a repo whose own (possibly
+  untrusted) config or a hostile ambient environment variable names an
+  external program for one of these purposes, that program never runs.
+  `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` are deliberately left alone:
+  respecting your own git config when reading your own repository is
+  intentional here.
 - **Never writes to your files.** No comment gets injected, no PR gets
   opened, no file gets edited. Every script prints text (JSON or plain
   text); what happens to that text, including whether it goes on the

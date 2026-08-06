@@ -1,6 +1,9 @@
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
@@ -162,6 +165,126 @@ class TestGrepMatchFileCount(unittest.TestCase):
             info = make_fixture_repo.build_f1(tmp)
             count = gitq.grep_match_file_count(info["repo"], "no_such_token_anywhere")
             self.assertEqual(count, 0)
+
+
+def _write_marker_pager(directory):
+    """A fake `core.pager` program: writes a marker file if it ever runs,
+    and does nothing else. Returns (script_path, marker_path).
+    """
+    marker = Path(directory) / "pager_was_called"
+    script = Path(directory) / "fake_pager.sh"
+    script.write_text("#!/bin/sh\necho called > {}\n".format(marker))
+    script.chmod(0o755)
+    return script, marker
+
+
+class TestGrepOpenFilesInPagerShortForm(unittest.TestCase):
+    """`git grep -O` (the short form of --open-files-in-pager) launches
+    core.pager/$GIT_PAGER as a real subprocess with matched file paths as
+    arguments; WRITE_FLAG_PREFIXES only matched the long form until this
+    fix. `-O` accepts an attached value (`-Ovim`), so the guard must be a
+    prefix match, and the same short form is dangerous for `log`/`diff`
+    too since they accept the same flag.
+    """
+
+    def test_grep_dash_o_is_refused(self):
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["grep", "-O", "x"])
+
+    def test_grep_dash_o_with_attached_value_is_refused(self):
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["grep", "-Ovim", "x"])
+
+    def test_log_dash_o_with_attached_value_is_refused(self):
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["log", "-O/tmp/f", "-1"])
+
+
+class TestPagerExecutionIsSanitized(unittest.TestCase):
+    """The flag guard above proves run_git *refuses* to run `grep -O`.
+    That alone would miss an ordering bug: if some future change let a
+    pager-triggering call reach `subprocess.run` without going through
+    that check (a different flag this project has not thought of, a typo
+    in the prefix list, ...), would the environment and config gitq
+    forces onto every invocation still have prevented real execution?
+    These tests answer that directly, by observing whether a malicious
+    `core.pager`/`$GIT_PAGER` program actually ran (a file it would have
+    written), not by checking for an exception. "Only checking the
+    exception misses ordering problems": a test that merely asserts
+    GitWriteAttempt was raised would still pass if _SAFE_GIT_CONFIG or
+    _SAFE_ENV_OVERRIDES were silently broken, since the guard runs before
+    either ever gets a chance to matter for *this* input; these tests
+    apply gitq's own safety constants exactly as run_git does and run the
+    dangerous command directly, so a regression in the constants
+    themselves, not just in the guard, would be caught.
+    """
+
+    def test_premise_a_repo_local_pager_really_is_exploitable_unguarded(self):
+        # Pin that this is a real vulnerability, not a hypothetical: with
+        # none of gitq's defenses applied, plain `git grep -O` in a repo
+        # whose local config points core.pager at our script really does
+        # run that script.
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_f1(tmp)
+            script, marker = _write_marker_pager(tmp)
+            subprocess.run(["git", "config", "core.pager", str(script)],
+                            cwd=info["repo"], check=True)
+            subprocess.run(["git", "grep", "-O", "-F", "-e", "charge"],
+                            cwd=info["repo"], capture_output=True, text=True)
+            self.assertTrue(marker.exists(),
+                             "premise: without any defense this repo-local "
+                             "core.pager really is exploitable via -O")
+
+    def test_repo_local_pager_config_is_overridden(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_f1(tmp)
+            script, marker = _write_marker_pager(tmp)
+            subprocess.run(["git", "config", "core.pager", str(script)],
+                            cwd=info["repo"], check=True)
+
+            env = dict(os.environ)
+            env.update(gitq._SAFE_ENV_OVERRIDES)
+            subprocess.run(
+                ["git", *gitq._SAFE_GIT_CONFIG, "grep", "-O", "-F", "-e", "charge"],
+                cwd=info["repo"], capture_output=True, text=True, env=env,
+            )
+            self.assertFalse(
+                marker.exists(),
+                "core.pager script must never run once gitq's safe "
+                "config/env are applied, even for -O")
+
+    def test_hostile_ambient_git_pager_environment_variable_is_overridden(self):
+        # The config override above is not enough on its own: a GIT_PAGER
+        # environment variable set by whatever process launches this
+        # tool wins over `-c core.pager` on the command line (confirmed
+        # empirically). _SAFE_ENV_OVERRIDES must win over that too.
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_f1(tmp)
+            script, marker = _write_marker_pager(tmp)
+            with unittest.mock.patch.dict(os.environ, {"GIT_PAGER": str(script)}):
+                env = dict(os.environ)
+                env.update(gitq._SAFE_ENV_OVERRIDES)
+                subprocess.run(
+                    ["git", *gitq._SAFE_GIT_CONFIG, "grep", "-O", "-F", "-e", "charge"],
+                    cwd=info["repo"], capture_output=True, text=True, env=env,
+                )
+            self.assertFalse(
+                marker.exists(),
+                "a hostile ambient GIT_PAGER must not survive "
+                "_SAFE_ENV_OVERRIDES")
+
+    def test_run_git_itself_never_creates_the_marker_for_an_allowed_grep(self):
+        # End-to-end through the real public API (no -O involved, since
+        # that is refused before reaching subprocess at all): a normal,
+        # allowed grep call in a repo with a hostile core.pager must not
+        # trigger it either.
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_f1(tmp)
+            script, marker = _write_marker_pager(tmp)
+            subprocess.run(["git", "config", "core.pager", str(script)],
+                            cwd=info["repo"], check=True)
+            gitq.run_git(info["repo"], ["grep", "-l", "-F", "-e", "charge"])
+            self.assertFalse(marker.exists())
 
 
 class TestQuotepathOffCarveOut(unittest.TestCase):
