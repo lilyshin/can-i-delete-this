@@ -164,5 +164,34 @@ class TestNoiseScoring(unittest.TestCase):
         self.assertEqual(len(v.signals), 2)
 
 
+class TestKeywordCategoriesAreEnglishOnly(unittest.TestCase):
+    """Documents a real, disclosed boundary (see README.md and
+    noise-catalog.md): the Stage 2 keyword regexes only match English
+    vocabulary. A non-English formatter-sweep subject over a large
+    breadth scores as not-noise via the keyword path, with no signals at
+    all. This is not a bug to silently work around here; it is the
+    boundary this project discloses instead of guessing at a Korean
+    keyword lexicon. Structural signals (whitespace-only, vendored paths,
+    generated paths, merge commits, import concentration) are unaffected,
+    since none of them read the subject text.
+    """
+
+    def test_korean_formatter_sweep_scores_as_not_noise_via_keywords(self):
+        c = commit(subject="잡일: 저장소 전체 포맷터 적용", files=25)
+        v = noise.score(c, whitespace_only=False, paths=["a.py"] * 25)
+        self.assertFalse(v.is_noise)
+        self.assertEqual(v.category, "")
+        self.assertEqual(v.signals, ())
+
+    def test_same_shape_english_subject_does_score_as_noise(self):
+        # Same breadth, same whitespace_only=False, only the language of
+        # the subject differs, to isolate that the gap is language, not
+        # some other property of the fixture.
+        c = commit(subject="chore: apply formatter across the repo", files=25)
+        v = noise.score(c, whitespace_only=False, paths=["a.py"] * 25)
+        self.assertTrue(v.is_noise)
+        self.assertEqual(v.category, "N1")
+
+
 if __name__ == "__main__":
     unittest.main()

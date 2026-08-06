@@ -6,6 +6,33 @@ keyword checks below; `gitq.blame_shas` already runs `blame -w -C -C -C`, which
 handles some of these before noise scoring ever runs. Fixture references point
 at the regression test that proves each case.
 
+**Language boundary, disclosed rather than guessed at:** every Stage 2
+keyword regex below (`_FORMATTER`, `_LICENSE`, `_IMPORTS`, `_GENERATED`,
+`_UPGRADE`, `_TYPO`, `_MOVE`) matches English vocabulary only. A commit
+subject in Korean, or any other non-English language, will not match any of
+them, no matter how large the breadth. `tests/test_noise.py`'s
+`TestKeywordCategoriesAreEnglishOnly` pins this: a 25-file commit titled
+`"잡일: 저장소 전체 포맷터 적용"` (a formatter sweep, in Korean) scores
+`is_noise: false` with zero signals, where the same commit with an English
+subject scores N1 as expected. This is a real, current limitation, not a bug
+this project is quietly working around: building a Korean (or any other
+non-English) keyword lexicon is real feature work needing its own design and
+evaluation, and is deliberately out of scope here.
+
+Concretely, a non-English formatter/license/import/generated/upgrade/move/
+typo sweep is not excluded from `introduction_candidates` the way its
+English-worded equivalent would be: since it never scores as noise, it stays
+in the candidate list untagged, indistinguishable from a real introduction
+by the noise field alone. What is unaffected by the commit's language:
+every Stage 1 structural signal (whitespace-only, vendored paths,
+generated-file paths, merge commits, import concentration), because none of
+them read the subject text, and `trace.py`'s pickaxe and line-history
+fallbacks, because they search by content and line lineage, not by commit
+message. So the real introducing commit still surfaces as a candidate
+alongside the un-flagged sweep; an agent just loses noise.py's usual head
+start at telling the two apart, and has to fall back to reading diffs by
+hand, same as it would for any other candidate noise.py could not classify.
+
 ## Contents
 
 - [N1: Formatter / linter bulk apply](#n1-formatter--linter-bulk-apply)
