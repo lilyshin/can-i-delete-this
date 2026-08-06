@@ -166,6 +166,24 @@ categories (import sorts, license headers, generated code, language/upgrade
 sweeps, and typo/comment-only edits) are covered at the unit level; see the
 catalog for why a dedicated repository was not needed for those.
 
+## Known boundary: keyword-based noise scoring is English-only
+
+`noise.py`'s keyword categories (formatter, license header, imports,
+generated code, upgrade sweep, move/rename, typo/comment-only, squash)
+match English vocabulary in the commit subject. A non-English subject, for
+example a Korean `chore: apply formatter`-equivalent, will not match any of
+them, no matter how many files it touches; `tests/test_noise.py`'s
+`TestKeywordCategoriesAreEnglishOnly` pins a 25-file Korean-titled formatter
+sweep scoring `is_noise: false` with zero signals. This is disclosed, not
+silently patched over: building a non-English keyword lexicon is real
+feature work with its own design and evaluation, and is out of scope here.
+What is unaffected by the commit's language: every structural signal
+(whitespace-only, vendored paths, generated-file paths, merge commits,
+import concentration), since none of them read the subject text, and the
+pickaxe and line-history fallbacks, since they search by content and line
+lineage, not by commit message. See `noise-catalog.md` for the fuller
+account of what this means for `introduction_candidates` in practice.
+
 ## Safety
 
 - **Read-only.** `gitq.py` allows exactly fifteen read subcommands: `blame`,
@@ -199,11 +217,11 @@ line-history로 실제 도입 커밋을 찾아, 삭제 위험도를 커밋 근�
 바뀐 포맷터 커밋을 이미 스스로 뚫습니다. 이 도구가 겨냥하는 것은 quote
 통일이나 trailing comma 삽입 같은 **토큰을 바꾸는** 포맷터와 rename·코드
 이동·squash·revert이며, `-w`로 해결되는 케이스는 대상이 아닙니다. 둘째,
-히스토리가 작으면(`git log --oneline | wc -l`로 20개 이하) 이 도구가
-필요 없습니다. 커밋 3개짜리 fixture에서 스킬 없는 에이전트가 `git log -p`
-만으로 정답과 근거를 정확히 냈습니다.
+히스토리가 작으면(`git log --oneline -- <path> | wc -l`로 20개 이하) 이
+도구가 필요 없습니다. 커밋 3개짜리 fixture에서 스킬 없는 에이전트가 `git
+blame`과 `git log --oneline --all`을 써서 정답과 근거를 정확히 냈습니다.
 
-이 도구가 실제로 값을 내는 지점도 측정했습니다. 커밋 113개짜리 히스토리를
+이 도구가 제값을 하는 지점도 측정했습니다. 커밋 113개짜리 히스토리를
 시간 압박 속에서 조사시켰을 때, 스킬 없는 에이전트는 3번 중 2번 실패했습니다
 (한 번은 히스토리를 전혀 안 보고 8.5초 만에 답했고 그 사실을 밝히지 않았고,
 다른 한 번은 물어본 줄이 아닌 다른 줄에 대해 확신 있게 답하며 삭제를
@@ -213,9 +231,21 @@ line-history로 실제 도입 커밋을 찾아, 삭제 위험도를 커밋 근�
 tracer가 한 번에 다 풀려서 실제로 잘라낸 것이 없었기 때문에 disclosure
 규칙 자체는 제대로 시험되지 않았습니다.
 
-설치는 Claude Code 마켓플레이스를 통해서만 지원합니다
-(`/plugin marketplace add lilyshin/can-i-delete-this`). 셸 설치 스크립트는
-만들지 않았습니다. 이 스킬은 사용자 파일에 쓰지 않으며, 표준 라이브러리
-외 의존성이 없습니다.
+알려진 경계도 하나 있습니다: `noise.py`의 키워드 기반 채점(포맷터·라이선스
+헤더·import·생성 코드·업그레이드·이동/rename·오탈자·squash)은 영어 어휘만
+찾습니다. 커밋 메시지가 한국어면 파일이 아무리 많아도 이 키워드는 하나도
+맞지 않습니다(`tests/test_noise.py`의
+`TestKeywordCategoriesAreEnglishOnly`가 25개 파일짜리 한국어 포맷터 sweep이
+신호 없이 `is_noise: false`로 채점됨을 고정합니다). whitespace-only·vendored
+경로·생성 경로·merge 커밋·import 비율 같은 구조적 신호와 pickaxe·line-history
+폴백은 커밋 메시지를 읽지 않으므로 언어와 무관하게 그대로 작동합니다. 한국어
+키워드 사전을 만드는 일은 그 자체로 설계와 검증이 필요한 별도 기능이라 이번
+범위 밖입니다.
+
+설치는 Claude Code 마켓플레이스로 지원합니다
+(`/plugin marketplace add lilyshin/can-i-delete-this`). Codex, Copilot CLI,
+Gemini CLI는 `~/.agents/skills/`를 읽으므로 `AGENTS.md`에 안내된 대로
+`./skills/`를 심볼릭 링크하면 됩니다. 셸 설치 스크립트는 만들지 않았습니다.
+이 스킬은 사용자 파일에 쓰지 않으며, 표준 라이브러리 외 의존성이 없습니다.
 
 </details>
