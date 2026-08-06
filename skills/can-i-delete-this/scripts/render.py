@@ -9,16 +9,30 @@ verdict deciding that is written after the tracer runs), so this module
 takes its cue from the verdict's own evidence, not from list position or
 list membership alone:
 
-- An `introduction_candidates` entry renders bold and coloured, tagged
-  "real introduction", only when its sha matches a `commit` entry in
-  `verdict["evidence"]` (matched on prefix, since evidence refs are usually
-  short shas). Every other introduction candidate renders as a plain row:
-  it survived noise filtering, but the verdict did not cite it.
+- A candidate renders bold and coloured, tagged "real introduction", when
+  its sha matches a `commit` entry in `verdict["evidence"]` (matched on
+  prefix, since evidence refs are usually short shas), whether that
+  candidate lives in `introduction_candidates` or only in
+  `blame_candidates` (see `citation.py` for why a cited commit can live in
+  either list -- the short version: noise filtering can remove the real
+  commit from `introduction_candidates` entirely, and the workflow this
+  skill teaches then has the agent cite it out of `blame_candidates`
+  anyway, after reading its diff). Every other introduction candidate
+  renders as a plain row: it survived noise filtering, but the verdict did
+  not cite it.
 - A `blame_candidates` entry renders greyed-out and struck through, with
-  the noise category that disqualified it, only when `noise.is_noise` is
-  true. A blame candidate that scored as not-noise (this happens: breadth
-  or whitespace checks can clear a commit that still is not the real
-  introduction) renders as a plain row instead, never struck through.
+  the noise category that disqualified it, when `noise.is_noise` is true
+  and the verdict did not cite it. A blame candidate that scored as
+  not-noise (this happens: breadth or whitespace checks can clear a commit
+  that still is not the real introduction) renders as a plain row instead,
+  never struck through.
+- When the verdict cites a commit that blame_candidates flags noisy, both
+  facts render on the *same* row: bold "real introduction" plus the noise
+  category as a second tag. This is not a contradiction to hide -- it is
+  exactly the situation noise-catalog.md's N10 entry describes, and the
+  page should say so rather than pick one fact and drop the other. The
+  same commit never gets a second, separate noise row once it has been
+  rendered as real.
 
 A reader should not need to read any prose to see which commit is the
 answer and which one git blame lied about, but this module also must not
@@ -31,6 +45,8 @@ import html
 import json
 import os
 import tempfile
+
+import citation
 
 _BADGE = {
     "danger": ("Do not delete", "#b42318", "#fee4e2"),
@@ -137,9 +153,42 @@ def _short(sha):
     return _e(str(sha)[:7])
 
 
-def _real_row(candidate):
-    why = candidate.get("why", "")
+def _real_row(candidate, *, noise=None):
+    """The row for the commit the verdict cites as the real introduction.
+
+    `candidate` can come from either candidate list: introduction_candidates
+    (carries why/author_email/files_changed) or blame_candidates (carries
+    only sha/subject/date/author/noise). Both shapes are handled here
+    rather than forcing every caller to pre-normalize, since this is the
+    one place both shapes ever need to render as "the answer".
+
+    `noise` is that same candidate's own noise verdict, when known. When
+    `noise["is_noise"]` is true, the cited commit is both the real
+    introduction and a commit noise.py would have flagged on its own --
+    exactly the N10 situation noise-catalog.md documents (a squash commit
+    whose message cannot be trusted, but whose diff is). Both facts render
+    on this one row; nothing about this candidate is ever rendered as a
+    second, separate noise row elsewhere (see render()).
+    """
+    why = candidate.get("why") or "blame"
     why_label = _WHY_LABEL.get(why, why)
+    author = _e(candidate.get("author", ""))
+    email = candidate.get("author_email")
+    who = "{} &lt;{}&gt;".format(author, _e(email)) if email else author
+
+    noise_html = ""
+    if noise and noise.get("is_noise"):
+        tag_text = "also flagged noise"
+        category = noise.get("category")
+        if category:
+            tag_text += ", " + str(category)
+        signals = noise.get("signals") or []
+        signals_html = ""
+        if signals:
+            signals_html = '<div class="signals">{}</div>'.format(
+                "; ".join(_e(s) for s in signals))
+        noise_html = '<span class="tag noise">{}</span>{}'.format(_e(tag_text), signals_html)
+
     return (
         '<div class="row real">'
         '<span class="date">{date}</span>'
@@ -147,14 +196,15 @@ def _real_row(candidate):
         '<span class="entry">'
         '<span class="subject">{sha} {subject}</span>'
         '<span class="tag real">real introduction</span>'
-        '<div class="meta">{author} &lt;{email}&gt; &middot; {why}</div>'
+        '{noise}'
+        '<div class="meta">{who} &middot; {why}</div>'
         '</span></div>'
     ).format(
         date=_day(candidate.get("date")),
         sha=_short(candidate.get("sha", "")),
         subject=_e(candidate.get("subject", "")),
-        author=_e(candidate.get("author", "")),
-        email=_e(candidate.get("author_email", "")),
+        noise=noise_html,
+        who=who,
         why=_e(why_label),
     )
 
@@ -186,30 +236,6 @@ def _plain_row(candidate, *, show_why=False):
         subject=_e(candidate.get("subject", "")),
         meta=meta_html,
     )
-
-
-def _commit_refs(verdict_data):
-    """Lowercased, non-empty commit refs cited as evidence in the verdict."""
-    refs = []
-    for item in verdict_data.get("evidence", []) or []:
-        if not isinstance(item, dict) or item.get("type") != "commit":
-            continue
-        ref = item.get("ref")
-        if isinstance(ref, str) and ref.strip():
-            refs.append(ref.strip().lower())
-    return refs
-
-
-def _cited_as_real(sha, refs):
-    """True when `sha` matches one of the verdict's cited commit refs.
-
-    Refs are usually short shas, so the match is a prefix match on the
-    full sha, not equality.
-    """
-    sha = str(sha or "").lower()
-    if not sha:
-        return False
-    return any(sha.startswith(ref) for ref in refs if ref)
 
 
 def _noise_row(candidate):
@@ -267,28 +293,52 @@ def render(trace_data, verdict_data):
     # not list position and not "found via blame", is what decides the bold
     # tag below: trace.py sorts introduction_candidates chronologically, and
     # chronological order is not "which one is real" (see M2 in the final
-    # fix report). Only the agent's own verdict knows that.
-    commit_refs = _commit_refs(verdict_data)
-    real_shas = {
-        c.get("sha") for c in trace_data.get("introduction_candidates", [])
-        if _cited_as_real(c.get("sha"), commit_refs)
-    }
+    # fix report). Only the agent's own verdict knows that. citation.py
+    # searches both introduction_candidates and blame_candidates, because a
+    # cited commit is not guaranteed to be in the first list at all -- see
+    # this module's docstring and citation.py's for the N10 case where it
+    # is not.
+    commit_refs = citation.commit_refs(verdict_data.get("evidence"))
+    real_shas = citation.real_shas(trace_data, commit_refs)
+    blame_by_sha = {b.get("sha"): b for b in trace_data.get("blame_candidates", [])}
 
     # Order matters for the argument: the real introducing commit(s) lead
     # the timeline, then whatever blame actually pointed at, then any revert
     # chain. This is not chronological; it is rhetorical.
+    #
+    # `rendered` tracks every sha that has already produced a row so no
+    # commit is ever shown twice. This matters beyond the noise-vs-real
+    # collision this fix targets: trace.py's own `add()` puts a
+    # non-noise blame result into introduction_candidates AND leaves it in
+    # blame_candidates, and a cited commit can also be part of
+    # revert_chain (build_f5's reintro commit is exactly this -- its
+    # subject contains "reapply"). Without this guard the same row would
+    # repeat under a second, and sometimes a third, tag.
     rows = []
+    rendered = set()
     for c in trace_data.get("introduction_candidates", []):
-        if c.get("sha") in real_shas:
-            rows.append(_real_row(c))
+        sha = c.get("sha")
+        rendered.add(sha)
+        if sha in real_shas:
+            rows.append(_real_row(c, noise=blame_by_sha.get(sha, {}).get("noise")))
         else:
             rows.append(_plain_row(c, show_why=True))
     for b in trace_data.get("blame_candidates", []):
-        if b.get("noise", {}).get("is_noise"):
+        sha = b.get("sha")
+        if sha in rendered:
+            continue
+        rendered.add(sha)
+        if sha in real_shas:
+            rows.append(_real_row(b, noise=b.get("noise")))
+        elif b.get("noise", {}).get("is_noise"):
             rows.append(_noise_row(b))
         else:
             rows.append(_plain_row(b, show_why=False))
     for r in trace_data.get("revert_chain", []):
+        sha = r.get("sha")
+        if sha in rendered:
+            continue
+        rendered.add(sha)
         rows.append(_revert_row(r))
 
     # co_changed is the strongest deterministic signal the strategy tree
@@ -381,10 +431,17 @@ def render(trace_data, verdict_data):
         "<strong>History: blame vs. the real introduction</strong>\n"
         "<div class=\"timeline\">{rows}</div>\n"
         "<p class=\"hint\">Filled dot: the commit the verdict cites as the real "
-        "introduction. Struck-through hollow dot: a commit scored as noise, "
-        "including whatever plain <code>git blame</code> would have pointed you "
-        "to if it was flagged noise. Plain hollow dot: a candidate this search "
-        "found that was neither cited as real nor scored as noise.</p>\n"
+        "introduction, even when that commit is only found in the "
+        "noise-flagged blame list; a noise tag on a filled-dot row means it is "
+        "still the real introduction, and also a commit that would have "
+        "scored as noise on its own (a squash commit is the common case, see "
+        "N10). Struck-through hollow dot: a commit scored as noise and not "
+        "cited by the verdict, including whatever plain <code>git blame</code> "
+        "would have pointed you to. Plain hollow dot: a candidate this search "
+        "found that was neither cited as real nor scored as noise. "
+        "Circular-arrow dot: part of a revert/reapply chain, kept regardless "
+        "of noise scoring or citation, because reverted-then-reapplied code is "
+        "the strongest do-not-delete signal this tool has.</p>\n"
         "{co_changed}"
         "</div>\n"
         "<div class=\"card\"><strong>Evidence</strong><ul>{evidence}</ul></div>\n"

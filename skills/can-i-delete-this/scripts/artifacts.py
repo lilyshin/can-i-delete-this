@@ -10,6 +10,8 @@ import posixpath
 import shutil
 import subprocess
 
+import citation
+
 CLIPBOARD_TOOLS = (
     ("pbcopy", ["pbcopy"]),
     ("wl-copy", ["wl-copy"]),
@@ -22,46 +24,70 @@ CLIPBOARD_TOOLS = (
 _TEST_DIR_NAMES = {"tests", "test", "spec", "specs", "__tests__"}
 
 
-def _commit_refs(evidence):
-    """Lowercased, non-empty commit refs cited as evidence in the verdict."""
-    refs = []
-    for item in evidence or []:
-        if not isinstance(item, dict) or item.get("type") != "commit":
-            continue
-        ref = item.get("ref")
-        if isinstance(ref, str) and ref.strip():
-            refs.append(ref.strip().lower())
-    return refs
+def _top(trace_data, refs):
+    """Pick the candidate the artifact should describe, and how it was found.
 
+    Returns (candidate, status):
 
-def _cited_as_real(sha, refs):
-    sha = str(sha or "").lower()
-    if not sha:
-        return False
-    return any(sha.startswith(ref) for ref in refs if ref)
-
-
-def _top(trace_data, evidence=None):
-    """Pick the introduction candidate the artifact should describe.
-
-    introduction_candidates is sorted chronologically by trace.py, oldest
-    first; the oldest candidate is not necessarily the real introduction
-    (an older commit can share a pickaxe token with the target line without
-    being the commit that put it there). The verdict's own evidence is what
-    actually names the real commit, so prefer a candidate whose sha matches
-    a `commit` entry in `evidence`. Only when nothing matches (no evidence
-    passed, or none of it matches any candidate) fall back to the oldest
-    candidate, same as before this function knew about the verdict.
+    - "cited": `candidate` is what the verdict's evidence cites, found by
+      citation.find_cited in either introduction_candidates or
+      blame_candidates. See citation.py for why the cited commit is not
+      guaranteed to be in the first list: noise filtering can remove the
+      real commit from introduction_candidates entirely (the N10 squash
+      case is the common one), and SKILL.md's workflow then has the agent
+      cite it out of blame_candidates anyway, after reading its diff.
+    - "unresolved": the verdict cited a commit (`refs` is non-empty), but
+      it names no commit in either list. verdict.py's schema only checks
+      that a ref is a non-empty string, not that it names a real commit in
+      this trace, so a stale or mistyped ref reaches here as a citation
+      that resolves to nothing. `candidate` is {}. Substituting some other
+      candidate here would be exactly the M2 misattribution this function
+      exists to prevent, so callers must say the citation did not resolve,
+      not guess a replacement.
+    - "fallback": no citation was made at all (`refs` is empty).
+      introduction_candidates is sorted chronologically, oldest first, and
+      the oldest entry is used for lack of anything better, same as before
+      this function knew about verdicts. `candidate` is {} if
+      introduction_candidates is also empty (status is then "empty"
+      instead, see below); this fallback only fires with a non-empty list.
+    - "empty": no citation, and introduction_candidates is empty too.
+      `candidate` is {}. This is the genuine "there is nothing to attribute
+      to" case, where "reason unknown" text is honest rather than evasive.
     """
     cands = trace_data.get("introduction_candidates") or []
-    if not cands:
-        return {}
-    refs = _commit_refs(evidence)
     if refs:
-        for c in cands:
-            if _cited_as_real(c.get("sha"), refs):
-                return c
-    return cands[0]
+        found, _source = citation.find_cited(trace_data, refs)
+        if found is not None:
+            return found, "cited"
+        return {}, "unresolved"
+    if cands:
+        return cands[0], "fallback"
+    return {}, "empty"
+
+
+def _unresolved_citation_text(grade, target, refs):
+    """Artifact text for a citation that names no commit in this trace.
+
+    Keeps the artifact useful even though the attribution is unresolved:
+    the grade, the target, and the cited ref(s) are still worth carrying,
+    and the reader needs to know the attribution has not been verified
+    rather than be handed a confident guess (see _top's "unresolved"
+    branch for why guessing is exactly the bug this avoids).
+    """
+    path = target.get("path", "unknown")
+    start = target.get("start", "unknown")
+    cited = ", ".join(refs) if refs else "unknown"
+    return "\n".join([
+        "Grade: {}".format(grade),
+        "Target: {}:{}".format(path, start),
+        "",
+        "The verdict cites commit {} as evidence, but no commit with that "
+        "prefix was found in this trace (checked introduction_candidates "
+        "and blame_candidates).".format(cited),
+        "This attribution could not be verified. Do not treat this grade "
+        "as confirmed; re-run the trace or check the citation by hand "
+        "before acting on it.",
+    ])
 
 
 def _is_test_path(path):
@@ -122,7 +148,11 @@ def skeleton(grade, trace_data, evidence=None):
     have not been updated keep the previous (oldest-candidate) behavior.
     """
     target = trace_data.get("target", {})
-    top = _top(trace_data, evidence)
+    refs = citation.commit_refs(evidence)
+    top, status = _top(trace_data, refs)
+
+    if status == "unresolved":
+        return _unresolved_citation_text(grade, target, refs)
 
     # Every field below is checked with isinstance() before use, not coerced
     # with str(). str(x) turns a missing/None date into "" or "None" and lets
