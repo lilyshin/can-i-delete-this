@@ -7,6 +7,7 @@ reading SKILL.md decides what the evidence means.
 import argparse
 import json
 import re
+import sys
 
 import gitq
 import noise
@@ -167,6 +168,24 @@ def trace(repo, path, start, end, *, max_commits=5000, since=None,
     }
 
 
+def _parse_lines(spec):
+    """Parse "--lines START:END" (or "START") into a pair of ints.
+
+    Raises ValueError with a message naming the bad input, which main()
+    turns into a clean CLI error instead of a raw traceback.
+    """
+    start_str, _, end_str = spec.partition(":")
+    try:
+        start = int(start_str)
+        end = int(end_str) if end_str else start
+    except ValueError:
+        raise ValueError(
+            "--lines must be START or START:END with integer values, got {!r}"
+            .format(spec)
+        )
+    return start, end
+
+
 def main():
     ap = argparse.ArgumentParser(description="Trace why a line of code exists.")
     ap.add_argument("--repo", required=True)
@@ -177,12 +196,32 @@ def main():
                      help="e.g. '3 years ago'; unset means no time bound")
     ap.add_argument("--max-candidates", type=int, default=200)
     args = ap.parse_args()
-    start, _, end = args.lines.partition(":")
-    result = trace(
-        args.repo, args.file, int(start), int(end or start),
-        max_commits=args.max_commits, since=args.since,
-        max_candidates=args.max_candidates,
-    )
+
+    try:
+        start, end = _parse_lines(args.lines)
+    except ValueError as exc:
+        print("error: {}".format(exc), file=sys.stderr)
+        sys.exit(2)
+
+    # gitq.run_git raises RuntimeError when the underlying git command
+    # fails (a nonexistent path, a line range past the end of the file,
+    # and similar bad-input cases all surface this way). GitWriteAttempt is
+    # also a RuntimeError but signals a bug in this project's own code, not
+    # bad user input, so it is deliberately let through uncaught rather than
+    # folded into the same clean-error handling as a real git failure.
+    try:
+        result = trace(
+            args.repo, args.file, start, end,
+            max_commits=args.max_commits, since=args.since,
+            max_candidates=args.max_candidates,
+        )
+    except gitq.GitWriteAttempt:
+        raise
+    except RuntimeError as exc:
+        print("error: could not trace {}:{}: {}".format(args.file, args.lines, exc),
+              file=sys.stderr)
+        sys.exit(1)
+
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
