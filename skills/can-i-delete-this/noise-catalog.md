@@ -94,12 +94,14 @@ through; six does not).
 
 ## N5: In-file or cross-file code move
 
-**Signals**: added and removed line counts are close to equal and the
-content matches, or the subject mentions `move|moved|relocate|reorganiz|
-restructur|extract`. The keyword path needs `files_changed >= 20`, confidence
-0.65. A function moving to a different file, with the origin file left
-behind rather than deleted, is a structural trap that `noise.py`'s keyword
-check does not catch on its own.
+**Signals**: keyword only. `files_changed >= 20` and the subject mentions
+`move|moved|relocate|reorganiz|restructur|extract`, confidence 0.65.
+`noise.py` does not implement an added/removed line-balance structural
+check for this category; a function moving to a different file, with the
+origin file left behind rather than deleted, is a structural trap that the
+keyword check alone does not catch, and nothing in `noise.py` catches it
+either. What actually recovers the real commit here is `trace.py`'s
+pickaxe fallback (see "Route around it" below), not a noise signal.
 
 **Route around it**: `blame -C -C -C` is documented to detect lines moved or
 copied from other files modified in the same commit, but empirically it does

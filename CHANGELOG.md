@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0
+## 0.1.0 - 2026-08-06
 
 Initial release.
 
@@ -24,5 +24,5 @@ Initial release.
 - `SKILL.md` plus reference docs (`noise-catalog.md`, `strategy-tree.md`,
   `CREATION-LOG.md`) that were shaped by measured pressure-test baselines,
   not by guessing what an agent needs.
-- Plugin metadata for Claude Code (marketplace + plugin manifest) and for
-  Codex/Copilot CLI/Gemini CLI (`.codex-plugin/plugin.json`, `AGENTS.md`).
+- Plugin metadata for Claude Code (marketplace + plugin manifest) and a
+  cross-runtime install path for Codex/Copilot CLI/Gemini CLI (`AGENTS.md`).

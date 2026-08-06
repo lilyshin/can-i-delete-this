@@ -53,6 +53,9 @@ Do not add a rule for a failure mode you have not observed; see
 
 ## Style
 
-- Documentation in English. `docs/specs/` (not shipped, not in this repo's
-  public tree) is the only place Korean-only notes belong.
+- Documentation in English. The only Korean text this project ships is
+  README.md's "한국어 요약" block and the verbatim quotes preserved in
+  `tests/pressure/`. If you keep Korean-language design notes for
+  yourself while working, keep them local; they are not part of this
+  repository and should not be included in a PR.
 - Commit subjects in English.
