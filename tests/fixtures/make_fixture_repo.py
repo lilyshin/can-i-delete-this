@@ -596,3 +596,46 @@ def build_deep_history(dest: str) -> dict:
         "noise_sha": noise_sha,
         "total_commits": 113,
     }
+
+
+def build_korean_paths(dest: str) -> dict:
+    """Korean commit messages and a Korean target filename, co-changed with
+    a Korean-named test file under an ASCII `tests/` directory.
+
+    Regression fixture for the `core.quotepath` bug: with git's default
+    `core.quotepath=true`, `git show --name-only` prints non-ASCII paths
+    octal-escaped and wrapped in double quotes (e.g.
+    `"\\352\\262\\260\\354\\240\\234\\353\\252\\250\\353\\223\\210.py"`
+    instead of "결제모듈.py"). That breaks three things at once: the
+    target file's own path never string-equals its escaped form, so
+    self-exclusion (trace.py's `p != path` check) fails and the target
+    shows up in its own co-changed list; the leading quote character
+    corrupts `posixpath.split`, so `artifacts._is_test_path` can no longer
+    recognize the (perfectly ordinary, ASCII) `tests/` directory segment
+    once the rest of the path is non-ASCII; and render.py would show the
+    raw escaped garbage to the user. This fixture reproduces all three in
+    one commit so the fix (`-c core.quotepath=off` on the git call that
+    lists changed paths) can be pinned with a single trace.
+    """
+    repo = _init(dest, "korean")
+    target = repo / "결제모듈.py"
+    target.write_text("def charge(order):\n    return order.total\n")
+    test_dir = repo / "tests"
+    test_dir.mkdir(parents=True, exist_ok=True)
+    # Deliberately no English "test"/"spec" filename marker: recognition
+    # here must come from the ASCII `tests/` directory segment alone, not
+    # from a filename suffix, so the fixture actually exercises the
+    # directory-segment path in `artifacts._is_test_path` rather than
+    # accidentally passing for an unrelated reason.
+    test_file = test_dir / "결제_확인.py"
+    test_file.write_text("def check_charge():\n    pass\n")
+    real_sha = _commit(repo, "핫픽스: 중복 결제 방지 (#521)",
+                       "2022-05-01T09:00:00")
+
+    return {
+        "repo": str(repo),
+        "path": "결제모듈.py",
+        "line": 1,
+        "real_sha": real_sha,
+        "test_path": "tests/결제_확인.py",
+    }

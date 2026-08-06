@@ -26,6 +26,17 @@ WRITE_FLAG_PREFIXES = (
     "--open-files-in-pager",
 )
 
+# The one, narrow, known-safe exception to "args[0] may not start with a
+# dash": `-c core.quotepath=off` so non-ASCII paths come back as real UTF-8
+# instead of git's default octal-escaped, double-quoted form (see
+# `changed_paths`). This is not a general allowance for leading-dash
+# arguments; it matches this exact two-token prefix only, and whatever
+# follows it is still validated against ALLOWED and WRITE_FLAG_PREFIXES
+# exactly as if the prefix were not there. See test_gitq.py's
+# TestBypassAttempts for the historical bypass vectors this must keep
+# refusing even with this carve-out in place.
+_QUOTEPATH_OFF_PREFIX = ("-c", "core.quotepath=off")
+
 _SEP = "\x1f"
 _FMT = _SEP.join(["%H", "%an", "%ae", "%aI", "%s", "%P", "%b"])
 
@@ -51,10 +62,17 @@ class Commit:
 def run_git(repo, args):
     if not args:
         raise GitWriteAttempt("empty git invocation")
-    if args[0].startswith("-"):
-        raise GitWriteAttempt("refusing to run git with global flags: " + args[0])
-    if args[0] not in ALLOWED:
-        raise GitWriteAttempt("refusing to run git subcommand: " + args[0])
+    # Strip exactly the known-safe `-c core.quotepath=off` prefix, if
+    # present, before validating the subcommand. Anything else starting
+    # with a dash, including a near-miss of this same prefix followed by
+    # more flags, still hits the checks below unchanged.
+    rest = args[2:] if tuple(args[:2]) == _QUOTEPATH_OFF_PREFIX else args
+    if not rest:
+        raise GitWriteAttempt("empty git invocation")
+    if rest[0].startswith("-"):
+        raise GitWriteAttempt("refusing to run git with global flags: " + rest[0])
+    if rest[0] not in ALLOWED:
+        raise GitWriteAttempt("refusing to run git subcommand: " + rest[0])
     for arg in args:
         for prefix in WRITE_FLAG_PREFIXES:
             if arg.startswith(prefix):
@@ -126,7 +144,13 @@ def line_history(repo, path, start, end, max_commits=None, since=None):
 
 
 def changed_paths(repo, sha):
-    out = run_git(repo, ["show", "--name-only", "--format=", sha])
+    # -c core.quotepath=off: without it, git prints non-ASCII paths octal-
+    # escaped and wrapped in double quotes (git's default core.quotepath is
+    # true), which breaks self-exclusion comparisons and test-path detection
+    # downstream and would show raw escaped garbage to the user. See
+    # test_korean_paths.py for the fixture that pins this.
+    out = run_git(repo, ["-c", "core.quotepath=off", "show", "--name-only",
+                          "--format=", sha])
     return [p for p in out.splitlines() if p.strip()]
 
 

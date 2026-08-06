@@ -131,5 +131,66 @@ class TestBypassAttempts(unittest.TestCase):
         self.assertFalse(Path(output_file).exists(), "File should not be created when write flag is blocked")
 
 
+class TestQuotepathOffCarveOut(unittest.TestCase):
+    """The `-c core.quotepath=off` carve-out in run_git must be narrow: it
+    matches exactly that two-token prefix and nothing else, and everything
+    after it is still checked against ALLOWED and WRITE_FLAG_PREFIXES as if
+    the prefix were not there. The four vectors below are the historical
+    bypasses this project's read-only guard was built against; all four
+    must still be refused with this carve-out in place.
+    """
+
+    def test_carve_out_permits_the_documented_read_case(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_f1(tmp)
+            out = gitq.run_git(info["repo"], [
+                "-c", "core.quotepath=off", "show", "--name-only",
+                "--format=", info["real_sha"],
+            ])
+            self.assertTrue(out.strip())
+
+    def test_historical_bypass_global_flag_before_subcommand(self):
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["-c", "user.email=x", "commit", "--allow-empty", "-m", "x"])
+
+    def test_historical_bypass_unknown_alias_subcommand(self):
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["co", "other"])
+
+    def test_historical_bypass_config_subcommand(self):
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["config", "user.email", "x"])
+
+    def test_historical_bypass_output_flag(self):
+        output_file = str(Path(_TEST_TMPDIR) / "should-not-exist-cidt3")
+        Path(output_file).unlink(missing_ok=True)
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["log", "-1", "--output=" + output_file])
+        self.assertFalse(Path(output_file).exists())
+
+    def test_carve_out_prefix_does_not_launder_a_write_subcommand(self):
+        # Same known-safe prefix, but a write subcommand right after it:
+        # the carve-out must not become a generic "anything after -c is
+        # fine" hole.
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["-c", "core.quotepath=off", "commit", "-m", "x"])
+
+    def test_carve_out_prefix_does_not_permit_a_second_config_flag(self):
+        # A near-miss of the known-safe prefix: the same two tokens, plus
+        # more config injected right after. rest[0] after stripping the
+        # exact prefix is still "-c", which must still be refused.
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", [
+                "-c", "core.quotepath=off", "-c", "user.email=x",
+                "commit", "--allow-empty", "-m", "x",
+            ])
+
+    def test_near_miss_quotepath_value_is_not_carved_out(self):
+        # Not the exact known-safe value: must fall through to the normal
+        # leading-dash refusal, not be treated as the carve-out.
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["-c", "core.quotepath=true", "log"])
+
+
 if __name__ == "__main__":
     unittest.main()
