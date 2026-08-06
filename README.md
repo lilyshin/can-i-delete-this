@@ -186,11 +186,15 @@ account of what this means for `introduction_candidates` in practice.
 
 ## Safety
 
-- **Read-only.** `gitq.py` allows exactly fifteen read subcommands: `blame`,
+- **Read-only.** `gitq.py` allows exactly sixteen read subcommands: `blame`,
   `log`, `show`, `diff`, `rev-parse`, `rev-list`, `cat-file`, `ls-files`,
   `ls-tree`, `merge-base`, `name-rev`, `describe`, `for-each-ref`,
-  `shortlog`, `var`. (`rev-list` is allowed but not actually invoked by any
-  production code path today.) There is no write path to a git object, a
+  `shortlog`, `var`, `grep`. (`rev-list` is allowed but not actually invoked
+  by any production code path today. `grep` searches the working tree, used
+  only to judge whether a candidate pickaxe needle is too common to be a
+  useful signal; its own historical write-adjacent risk,
+  `--open-files-in-pager`, is refused the same way every other subcommand's
+  is, by `WRITE_FLAG_PREFIXES`.) There is no write path to a git object, a
   working-tree file, or the index anywhere in this project's scripts.
 - **Never writes to your files.** No comment gets injected, no PR gets
   opened, no file gets edited. Every script prints text (JSON or plain

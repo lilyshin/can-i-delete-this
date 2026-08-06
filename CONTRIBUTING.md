@@ -15,8 +15,9 @@
 - **This skill never writes to the user's repository.** `gitq.py` only runs
   read-only git subcommands: `blame`, `log`, `show`, `diff`, `rev-parse`,
   `rev-list`, `cat-file`, `ls-files`, `ls-tree`, `merge-base`, `name-rev`,
-  `describe`, `for-each-ref`, `shortlog`, `var` (`rev-list` is allowed but
-  not actually called by any production code path today). Do not add a
+  `describe`, `for-each-ref`, `shortlog`, `var`, `grep` (`rev-list` is
+  allowed but not actually called by any production code path today; `grep`
+  searches the working tree only, used to judge needle rarity). Do not add a
   write path, and do not add `Write` to any plugin manifest's
   `capabilities`.
 - **No em dash characters** in any file. Use a comma, a period, or

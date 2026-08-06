@@ -549,11 +549,29 @@ def build_deep_history(dest: str) -> dict:
 
     Dates are fixed absolute values, not relative to "now", for the same
     determinism reason as every other fixture in this module.
+
+    The base commit's comment ("SecurityError policy... arrives later")
+    is deliberate, not filler: it plants the same rare identifier the
+    guard clause later raises (`SecurityError`) in an older, unrelated
+    commit, so this fixture still demonstrates trace.py's
+    position-vs-meaning trap (an older, non-introducing commit sharing a
+    pickaxe needle with the target line, see
+    test_render_m1_m2.py::OlderTokenCollisionCase) under trace.py's
+    ranked, capped needle selection. Before that ranking existed, a plain
+    English word shared between this commit and the target line
+    (`token`) was enough to cause the same collision; ranking now
+    deprioritizes exactly that kind of common word in favor of
+    distinctive identifiers, so demonstrating the same trap honestly
+    needs a distinctive identifier here instead.
     """
     repo = _init(dest, "deep_history")
     target = repo / "session_guard.py"
 
-    target.write_text("def authorize(token):\n    return token.user\n")
+    target.write_text(
+        "def authorize(token):\n"
+        "    # SecurityError policy: reject replayed tokens, arrives later\n"
+        "    return token.user\n"
+    )
     _commit(repo, "feat: add authorize", "2018-01-01T10:00:00")
 
     target.write_text(
@@ -595,6 +613,57 @@ def build_deep_history(dest: str) -> dict:
         "real_sha": real_sha,
         "noise_sha": noise_sha,
         "total_commits": 113,
+    }
+
+
+def build_needle_junk_probe(dest: str) -> dict:
+    """A target line combining one rare, genuinely distinctive identifier
+    with one common, equally identifier-shaped token that nonetheless
+    appears across many other files in the current tree.
+
+    Regression fixture for trace.py's needle rarity check
+    (`gitq.grep_match_file_count`, used by `_select_needles`). Before that
+    check existed, needle ranking looked at shape alone (length, presence
+    of `_`/`.`), and `configuration_value_holder` (26 characters,
+    underscored) out-ranks `checksum_retry_guard` (20 characters,
+    underscored) by that measure alone despite being the worse needle:
+    it is deliberately planted, one file at a time, across 20 unrelated
+    commits that never touch `target.py`, so a repo-wide pickaxe search
+    on it alone floods introduction_candidates with all 20. The rarity
+    check is what tells them apart: at HEAD, `configuration_value_holder`
+    appears in 21 files (target.py plus the 20 planted ones), comfortably
+    over trace.py's common-token threshold, while `checksum_retry_guard`
+    appears only in target.py.
+    """
+    repo = _init(dest, "needle_junk_probe")
+    target = repo / "target.py"
+    target.write_text("VALUE = 1\n")
+    _commit(repo, "feat: add target", "2019-01-01T10:00:00")
+
+    target.write_text(
+        "VALUE = 1\n"
+        "result = checksum_retry_guard(configuration_value_holder)\n"
+    )
+    real_sha = _commit(
+        repo, "fix: guard against retried checksum mismatches (#88)",
+        "2019-02-01T10:00:00")
+
+    junk_shas = []
+    for i in range(20):
+        other = repo / "other{}.py".format(i)
+        other.write_text("configuration_value_holder = {}\n".format(i))
+        sha = _commit(repo, "chore: add config holder {}".format(i),
+                      "2019-03-{:02d}T10:00:00".format(i + 1))
+        junk_shas.append(sha)
+
+    return {
+        "repo": str(repo),
+        "path": "target.py",
+        "line": 2,
+        "real_sha": real_sha,
+        "junk_shas": junk_shas,
+        "common_token": "configuration_value_holder",
+        "rare_token": "checksum_retry_guard",
     }
 
 

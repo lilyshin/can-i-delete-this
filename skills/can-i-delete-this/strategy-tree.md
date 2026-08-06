@@ -6,7 +6,7 @@ document exists for the moments it is not enough on its own. All commands
 below go through `gitq.run_git`, which only allows read subcommands
 (`blame`, `log`, `show`, `diff`, `rev-parse`, `rev-list`, `cat-file`,
 `ls-files`, `ls-tree`, `merge-base`, `name-rev`, `describe`, `for-each-ref`,
-`shortlog`, `var`) and refuses any global flag or write-adjacent flag.
+`shortlog`, `var`, `grep`) and refuses any global flag or write-adjacent flag.
 
 ## 1. Blame, with move and copy detection
 
@@ -37,20 +37,50 @@ noise or not. If you are unsure why a candidate scored as noise, check
 `signals` in its `noise` object; it lists every signal that fired, not just
 the one that set the category.
 
-## 3. Pickaxe on needles drawn from the target lines
+## 3. Pickaxe: path-scoped first, then repo-wide and narrower
 
 ```
-git log --format=%H -S '<needle>' --max-count=<max_commits> [--since=<since>]
+git log --format=%H -S '<needle>' --max-count=<max_commits> [--since=<since>] [-- <path>]
 ```
 
-Needles are up to five distinct tokens (`[A-Za-z_][A-Za-z0-9_.]{3,}`) pulled
-from the target lines' current content, tried one at a time, across full
-history by default. `-S` finds the commit that changed a string's *count* of
-occurrences, which crosses file renames and moves because it searches by
-content, not by path.
+Needles are ranked, not just the first tokens found. `trace.py` pulls
+distinct tokens (`[A-Za-z_][A-Za-z0-9_.]{3,}`) from the target lines'
+current content, drops stopwords (language keywords and ubiquitous
+programming terms, e.g. `def return import self this class true false`,
+since a match on one of these says nothing about which commit is
+distinctive), then ranks what is left by two things: longer tokens first,
+and tokens containing `_` or `.` first (they look like identifiers, not
+prose words). The top few ranked tokens are then rarity-checked with
+`git grep -l -F` against the current working tree; a token found in more
+than about 15 files is common enough in the tree today that matching it
+tells you little, so it is deprioritized (moved after the un-checked tail,
+not dropped, so it is still available if nothing better exists). If every
+token on the target lines turns out to be a stopword, needle selection
+falls back to the old behavior, first tokens found, unranked, rather than
+running pickaxe with nothing at all.
+
+The search itself runs in two passes, in this order:
+
+1. **Path-scoped**, `-- <path>` appended, on up to three ranked needles.
+   Cheap, and it finds anything that shares the target lines' current path
+   with its introducing commit.
+2. **Repo-wide**, no path restriction, on only the rarest one or two of
+   those needles. This is what crosses file renames and cross-file moves,
+   since `-S` searches by content, not by path, so it finds the introducing
+   commit even under a different filename or a different file entirely.
+   It is also the expensive, junk-prone half of the search: a needle that
+   turns out to be common anywhere in history, not just in the current
+   tree, can still surface many unrelated commits, which is why it runs on
+   fewer, rarer needles than the path-scoped pass, not skipped or gated
+   behind the path-scoped pass finding nothing. A commit found path-scoped
+   is not evidence that nothing needed a repo-wide search too: the
+   path-scoped pass only ever sees commits that touch the *current* path,
+   so a commit that introduced the target content under a different path
+   (before a rename, or in a different file entirely) is invisible to it
+   no matter how many needles it runs.
 
 **Comes up empty:** the needles were not distinctive enough (too generic, or
-the line is mostly punctuation and keywords). Widen the line range so more
+the line is mostly stopwords and punctuation). Widen the line range so more
 tokens are available, or pick a rarer token from the same block by hand and
 run `gitq.pickaxe` yourself with that string. If the file was renamed, check
 whether the old path has its own distinctive tokens worth trying too.

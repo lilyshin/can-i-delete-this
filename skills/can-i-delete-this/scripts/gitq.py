@@ -13,7 +13,7 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 ALLOWED = frozenset({
     "blame", "log", "show", "diff", "rev-parse", "rev-list",
     "cat-file", "ls-files", "ls-tree", "merge-base", "name-rev",
-    "describe", "for-each-ref", "shortlog", "var",
+    "describe", "for-each-ref", "shortlog", "var", "grep",
 })
 
 WRITE_FLAG_PREFIXES = (
@@ -59,7 +59,7 @@ class Commit:
     deletions: int
 
 
-def run_git(repo, args):
+def run_git(repo, args, ok_returncodes=(0,)):
     if not args:
         raise GitWriteAttempt("empty git invocation")
     # Strip exactly the known-safe `-c core.quotepath=off` prefix, if
@@ -80,7 +80,7 @@ def run_git(repo, args):
     proc = subprocess.run(
         ["git", *args], cwd=repo, capture_output=True, text=True,
     )
-    if proc.returncode != 0:
+    if proc.returncode not in ok_returncodes:
         raise RuntimeError("git " + " ".join(args) + " failed: " + proc.stderr.strip())
     return proc.stdout
 
@@ -152,6 +152,26 @@ def changed_paths(repo, sha):
     out = run_git(repo, ["-c", "core.quotepath=off", "show", "--name-only",
                           "--format=", sha])
     return [p for p in out.splitlines() if p.strip()]
+
+
+def grep_match_file_count(repo, token):
+    """Count of files in the current working tree that contain `token`
+    as a literal (fixed-string) match.
+
+    This is used to judge whether a candidate pickaxe needle is too
+    common in the tree today to be a distinctive signal, not to search
+    history: `git grep` with no revision argument searches the working
+    tree, which is exactly the "how common is this identifier right now"
+    question needle selection needs answered.
+
+    `git grep` exits 1, not 0, when nothing matches, unlike every other
+    read subcommand this module wraps; that is a normal "zero files"
+    result here, not a git failure, so it is tolerated explicitly rather
+    than raising, the way a genuine nonzero exit from `grep` (a bad
+    pattern, a repo with no HEAD yet) still does.
+    """
+    out = run_git(repo, ["grep", "-l", "-F", "-e", token], ok_returncodes=(0, 1))
+    return len([line for line in out.splitlines() if line.strip()])
 
 
 def is_whitespace_only(repo, sha):

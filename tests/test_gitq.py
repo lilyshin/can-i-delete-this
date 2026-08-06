@@ -131,6 +131,39 @@ class TestBypassAttempts(unittest.TestCase):
         self.assertFalse(Path(output_file).exists(), "File should not be created when write flag is blocked")
 
 
+class TestGrepAllowed(unittest.TestCase):
+    """`grep` is a read-only subcommand (searches the working tree, never
+    writes), added to ALLOWED for needle-rarity probing in trace.py's
+    needle selection. Its own historical write-adjacent risk,
+    `--open-files-in-pager`, is already covered by WRITE_FLAG_PREFIXES.
+    """
+
+    def test_grep_passes_the_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_f1(tmp)
+            out = gitq.run_git(info["repo"], ["grep", "-l", "-F", "-e", "charge"],
+                                ok_returncodes=(0, 1))
+            self.assertIn("payment.py", out)
+
+    def test_grep_open_files_in_pager_is_refused(self):
+        with self.assertRaises(gitq.GitWriteAttempt):
+            gitq.run_git("/tmp", ["grep", "--open-files-in-pager=vi", "x"])
+
+
+class TestGrepMatchFileCount(unittest.TestCase):
+    def test_counts_files_containing_the_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_f1(tmp)
+            count = gitq.grep_match_file_count(info["repo"], "already_charged")
+            self.assertEqual(count, 1)
+
+    def test_zero_matches_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_f1(tmp)
+            count = gitq.grep_match_file_count(info["repo"], "no_such_token_anywhere")
+            self.assertEqual(count, 0)
+
+
 class TestQuotepathOffCarveOut(unittest.TestCase):
     """The `-c core.quotepath=off` carve-out in run_git must be narrow: it
     matches exactly that two-token prefix and nothing else, and everything

@@ -14,6 +14,42 @@ import noise
 
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_\.]{3,}")
 
+# Heuristic denylist of language keywords and ubiquitous programming tokens
+# that make poor pickaxe needles precisely because they are everywhere: a
+# `git log -S` match on one of these says nothing about which commit is
+# distinctive. This is not a lexer and is not exhaustive; it is a curated
+# list spanning a handful of common languages (Python, Ruby, Elixir,
+# JS/TS, Java/Kotlin/C-family) that this project's own fixtures and
+# real-world traces surfaced as noisy. Comparison against it is
+# case-insensitive (see _rank_needles), so it also catches `True`/`None`
+# style capitalized keywords.
+_STOPWORDS = frozenset({
+    "def", "return", "import", "from", "self", "this", "class", "function",
+    "const", "public", "private", "static", "void", "end", "module",
+    "defmodule", "defp", "when", "case", "cond", "else", "elif", "true",
+    "false", "nil", "null", "none", "let", "var", "new", "async", "await",
+    "print", "raise", "rescue", "try", "catch", "except", "finally",
+    "with", "yield", "lambda", "while", "for", "break", "continue", "pass",
+    "global", "nonlocal", "if", "do", "then", "begin", "override",
+    "extends", "implements", "interface", "package", "namespace", "using",
+    "include", "require", "super", "instanceof", "throws", "throw",
+})
+
+# A token found in more than this many files of the current working tree
+# is common enough that matching it tells you little; see _select_needles.
+_COMMON_TOKEN_FILE_THRESHOLD = 15
+
+# Rarity-probing a token costs one `git grep` call, so only the top-ranked
+# tokens get checked, bounding the cost regardless of how many distinct
+# tokens the target lines contain.
+_RARITY_PROBE_LIMIT = 8
+
+# At most this many needles run path-scoped (see trace()); repo-wide runs
+# on the rarest _REPO_WIDE_NEEDLE_LIMIT of those, since repo-wide search is
+# the expensive, junk-prone half of pickaxe.
+_PATH_SCOPED_NEEDLE_LIMIT = 3
+_REPO_WIDE_NEEDLE_LIMIT = 2
+
 
 def _describe(repo, sha, why, cache):
     c, _ = _cached_meta_and_noise(repo, sha, cache)
@@ -38,8 +74,8 @@ def _cached_meta_and_noise(repo, sha, cache):
     return c, v
 
 
-def _needles(repo, path, start, end):
-    """Pick distinctive strings from the target lines to feed the pickaxe."""
+def _tokens_from_target(repo, path, start, end):
+    """Every distinct token on the target lines, in first-seen order."""
     text = gitq.run_git(repo, ["show", "HEAD:" + path])
     lines = text.splitlines()[start - 1:end]
     found = []
@@ -47,7 +83,99 @@ def _needles(repo, path, start, end):
         for token in _WORD.findall(line):
             if token not in found:
                 found.append(token)
-    return found[:5]
+    return found
+
+
+def _rank_needles(tokens):
+    """Order candidate needle tokens best-first.
+
+    Longer tokens, and tokens containing `_` or `.`, look like real
+    identifiers rather than generic prose words, so they make more
+    distinctive pickaxe needles. `sorted` is stable, so tokens that tie on
+    both measures keep their original (first-seen) relative order.
+    """
+    def rank_key(token):
+        looks_like_identifier = "_" in token or "." in token
+        return (looks_like_identifier, len(token))
+    return sorted(tokens, key=rank_key, reverse=True)
+
+
+def _select_needles(repo, path, start, end):
+    """Pick pickaxe needles from the target lines' current content.
+
+    Returns (path_needles, repo_needles, notes):
+
+    - path_needles: up to `_PATH_SCOPED_NEEDLE_LIMIT` tokens for a
+      path-scoped pickaxe search.
+    - repo_needles: up to `_REPO_WIDE_NEEDLE_LIMIT` tokens (the rarest of
+      path_needles) for a repo-wide pickaxe search, since repo-wide is the
+      expensive, junk-prone half of the search.
+    - notes: zero or more human-readable strings disclosing a deviation
+      worth knowing about (tokens rejected as too common, a narrower
+      repo-wide needle set, or a stopword-fallback).
+
+    Selection: drop stopwords, rank the rest (see _rank_needles), then
+    verify rarity for the top `_RARITY_PROBE_LIMIT` ranked tokens with
+    `gitq.grep_match_file_count` against the current working tree; a token
+    found in more than `_COMMON_TOKEN_FILE_THRESHOLD` files is
+    deprioritized (moved after the un-probed tail) rather than dropped, so
+    it is still available if nothing better exists. If every token on the
+    target lines is a stopword, this falls back to the pre-ranking
+    behavior (first tokens found, unfiltered) rather than returning no
+    needles at all, and says so in `notes`.
+    """
+    all_tokens = _tokens_from_target(repo, path, start, end)
+    notes = []
+
+    candidates = [t for t in all_tokens if t.lower() not in _STOPWORDS]
+    if not candidates:
+        notes.append(
+            "needle selection: every token on the target lines is a "
+            "stopword (a language keyword or an ubiquitous programming "
+            "term); falling back to the first tokens found, unranked"
+        )
+        fallback = all_tokens[:5]
+        return (fallback[:_PATH_SCOPED_NEEDLE_LIMIT],
+                fallback[:_REPO_WIDE_NEEDLE_LIMIT], notes)
+
+    ranked = _rank_needles(candidates)
+    probe_pool = ranked[:_RARITY_PROBE_LIMIT]
+    rare, common = [], []
+    for token in probe_pool:
+        try:
+            file_count = gitq.grep_match_file_count(repo, token)
+        except RuntimeError:
+            # A grep failure should not sink needle selection; keep the
+            # token in its ranked position rather than discarding it.
+            rare.append(token)
+            continue
+        if file_count > _COMMON_TOKEN_FILE_THRESHOLD:
+            common.append(token)
+        else:
+            rare.append(token)
+    # Tokens past the probe limit were never rarity-checked (bounded
+    # cost); keep them ranked, after the confirmed-rare ones and before
+    # the confirmed-common ones.
+    ordered = rare + ranked[_RARITY_PROBE_LIMIT:] + common
+
+    if common:
+        notes.append(
+            "needle selection: deprioritized {} common token(s) found in "
+            "more than {} files of the current tree: {}".format(
+                len(common), _COMMON_TOKEN_FILE_THRESHOLD,
+                ", ".join(common))
+        )
+
+    path_needles = ordered[:_PATH_SCOPED_NEEDLE_LIMIT]
+    repo_needles = ordered[:_REPO_WIDE_NEEDLE_LIMIT]
+    if len(path_needles) > len(repo_needles):
+        notes.append(
+            "needle selection: repo-wide pickaxe used only the rarest {} "
+            "of {} path-scoped needle(s) ({}), to bound repo-wide search "
+            "cost".format(len(repo_needles), len(path_needles),
+                          ", ".join(repo_needles))
+        )
+    return path_needles, repo_needles, notes
 
 
 def trace(repo, path, start, end, *, max_commits=5000, since=None,
@@ -97,7 +225,26 @@ def trace(repo, path, start, end, *, max_commits=5000, since=None,
     if not candidates:
         notes.append("blame returned only noise commits; falling back to pickaxe")
 
-    for needle in _needles(repo, path, start, end):
+    # Path-scoped pickaxe first, on up to three ranked needles: cheap, and
+    # it finds anything that shares the target lines' current path with
+    # its introducing commit. Repo-wide second, narrower (the rarest one
+    # or two needles only): it is what crosses renames and cross-file
+    # moves (a needle drawn from the target lines can find the commit that
+    # introduced them under a different path or file entirely), but it is
+    # also the expensive, junk-prone half of the search, since it walks
+    # every commit that ever changed the needle's occurrence count
+    # anywhere in the repository. Repo-wide must never be skipped just
+    # because path-scoped already found something: a commit found
+    # path-scoped is not evidence that nothing needed a repo-wide search
+    # too (see the module-level note on cross-file moves).
+    path_needles, repo_needles, needle_notes = _select_needles(repo, path, start, end)
+    notes.extend(needle_notes)
+
+    for needle in path_needles:
+        for sha in gitq.pickaxe(repo, needle, path=path, max_commits=max_commits, since=since):
+            add(sha, "pickaxe")
+
+    for needle in repo_needles:
         for sha in gitq.pickaxe(repo, needle, max_commits=max_commits, since=since):
             add(sha, "pickaxe")
 
