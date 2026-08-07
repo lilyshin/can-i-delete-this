@@ -8,6 +8,17 @@ below go through `gitq.run_git`, which only allows read subcommands
 `ls-files`, `ls-tree`, `merge-base`, `name-rev`, `describe`, `for-each-ref`,
 `shortlog`, `var`, `grep`) and refuses any global flag or write-adjacent flag.
 
+This tree runs unconditionally, on every request, regardless of history
+size: SKILL.md's `git log --oneline --follow -- <path> | wc -l` threshold
+decides where your understanding of intent comes from (the tracer's ranked
+candidates, or your own reading of `git log -p --follow -- <path>` on a
+short history), never whether this tree runs or whether a report and
+artifact get produced. Do not confuse that threshold command with the
+plain `git log --oneline -- <path>` (no `--follow`) used nowhere in this
+document: without `--follow` it only counts commits touching the file's
+*current* path, undercounting exactly the renamed-file histories this
+document's steps 1, 3 and 4 exist to see past.
+
 ## 1. Blame, with move and copy detection
 
 ```
@@ -166,6 +177,15 @@ because the investigation was thorough; thoroughness is not evidence.
 
 Write the verdict object (schema enforced by `scripts/verdict.py`), run it
 through `validate()`, then:
+
+If the commit you are citing is the one you found by reading history
+directly (a short history under SKILL.md's threshold) rather than one
+this tree's own steps surfaced, give its evidence item `subject`, `date`
+and `author` alongside `type` and `ref`. `citation.py` checks
+`introduction_candidates` and `blame_candidates` first, and only falls
+back to those fields, synthesizing a stand-in candidate from them, when
+the cited sha is in neither; a bare `ref` with none of those fields
+resolves as an unverified citation instead, exactly as before.
 
 ```
 python3 render.py --trace t.json --verdict v.json

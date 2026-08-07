@@ -1,7 +1,8 @@
 # Creation Log
 
-Why this skill exists, what it deliberately does not do, and the two times
-its own baseline testing overturned an assumption the design started with.
+Why this skill exists, what it deliberately does not do, and the three
+times its own baseline testing or field use overturned an assumption the
+design started with.
 Read this before changing the scope of `SKILL.md`; it is the record of the
 traps already found so nobody re-discovers them the slow way.
 
@@ -34,7 +35,7 @@ This skill packages that technique, not a new capability.
   not have prevented a single blame-trap failure observed in this project's
   own pressure tests.
 
-## Two value-proposition corrections
+## Three value-proposition corrections
 
 ### Correction 1: `git blame -w` already defeats whitespace formatters on its own
 
@@ -64,6 +65,43 @@ the "When you do not need this" section in `SKILL.md`: recommending
 not a shortfall this skill needs to close. The skill's value only shows up
 once a file's history is too large to read end to end, which the deep-history
 fixture (113 commits) was built specifically to represent.
+
+### Correction 3: the two paths should never have been mutually exclusive
+
+0.2.1 was driven by a field report against a real repository, not a
+pressure-test fixture: an agent asked about a file with two renames in its
+history ran Correction 2's threshold check, `git log --oneline -- <path> |
+wc -l`, got 4, and read the history directly instead of running the
+tracer, exactly as `SKILL.md` instructed. The answer was correct. Two
+things were still wrong. First, that command does not follow renames, so
+it counted only commits touching the file's current path; the agent later
+found the real count, with `--follow`, was 21, past the threshold that
+should have sent it to the tracer instead. Second, and independent of the
+miscount: the direct-reading path produced no report, no validated
+verdict, and no HTML, because nothing in `SKILL.md` told an agent on that
+path to produce them. The user's next question was "why is there no HTML?"
+
+Correction 2 was right that a human reading a short history reaches a
+better answer than ranked tooling output; it was wrong to make that a
+reason to skip the tracer altogether, because the tracer is also what
+produces every deliverable this skill promises. Fixed by decoupling the two
+things the threshold was doing at once: it now decides only where an
+agent's understanding of intent comes from (its own reading of `git log -p
+--follow`, at or under twenty commits, versus the tracer's ranked
+`introduction_candidates`, past it), never whether the tracer runs or
+whether a report and artifact get produced. The tracer now always runs.
+The threshold command was also fixed to include `--follow`, since the
+miscount that triggered this correction was a real bug independent of the
+restructuring.
+
+That restructuring exposed a second, previously latent gap: a commit an
+agent found by reading history directly, that the tracer's own searches
+(blame, pickaxe, line-history) never surfaced at all, used to resolve
+exactly like a stale or mistyped citation, an "unresolved" attribution
+naming nothing. `citation.py` now accepts a commit evidence item's own
+`subject`/`date`/`author` fields as a fallback source for exactly this
+case; see `tests/test_citation_resolution.py`'s `TestHistoryReadCitation`
+and `tests/test_trace_cases.py`'s `TestTwoRenames`.
 
 ## What the baseline observations actually concluded
 

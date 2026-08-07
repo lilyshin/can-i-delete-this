@@ -36,26 +36,43 @@ formatting (the quote-unification example above, trailing-comma insertion,
 line splitting) plus renames, code moves, squashed history and reverts,
 none of which whitespace-ignoring diff can see through.
 
-## When you do not need this
+## The tracer always runs; history size decides how you read, not whether you report
+
+Run the tracer on every request, regardless of history size. It is what
+produces the report, the mechanically-checked evidence, and the
+paste-ready artifact; none of that exists on a path that skips it. What
+history size decides is where your understanding of *why* the code exists
+comes from, not whether those deliverables get made.
 
 **Check the history size first:**
 
-    git log --oneline -- <path> | wc -l
+    git log --oneline --follow -- <path> | wc -l
 
-Twenty commits or fewer, read it directly:
+Use `--follow`. Without it, the count only includes commits that touched
+the file's *current* path, so a renamed file comes back undercounted,
+sometimes drastically; a rename is exactly the case where tracing earns
+its keep, so undercounting it is the one mistake this check cannot afford
+to make.
+
+Twenty commits or fewer, in addition to running the tracer, read the
+history directly too:
 
     git log -p --follow -- <path>
 
-That will get you to the right answer faster than any tool here. We
-measured this rather than assumed it: against a three-commit fixture (a
-hotfix later buried under one formatter commit), an agent with no skill
-loaded and no extra instructions used plain `blame` and `log`, correctly
-separated the formatter commit from the hotfix, and cited both shas with
-subjects, unprompted. Recommending `git log -p` and stopping there is the
-correct outcome on a small history, not a shortfall this tool exists to
-fix.
+At that size, your own reading of the diffs, not the tracer's ranked
+candidates, should drive your understanding of intent; it will get you
+there faster and more reliably than tooling. We measured this rather than
+assumed it: against a three-commit fixture (a hotfix later buried under
+one formatter commit), an agent with no skill loaded and no extra
+instructions used plain `blame` and `log`, correctly separated the
+formatter commit from the hotfix, and cited both shas with subjects,
+unprompted. Trusting your own reading over ranked output on a small
+history is the correct call, not a shortfall this tool exists to fix; the
+tracer's JSON still supplies the report and the artifact either way.
 
-Reach for the tracer once the count above crosses that threshold, or when:
+Past that threshold, `log -p` stops fitting in a read end to end, so lean
+on the tracer's `introduction_candidates` instead. Reach for its
+non-negotiable rules on both sides of the threshold, and also when:
 
 - the history does not fit in context to read end to end
 - `blame` lands on a formatter, rename, code-move or squash commit, and
@@ -230,13 +247,31 @@ squash 커밋이 실제 도입 커밋 위에 쌓이면 blame은 그 위에 있�
 line-history로 실제 도입 커밋을 찾아, 삭제 위험도를 커밋 근거와 함께
 등급으로 매깁니다(`danger`/`conditional`/`safe`/`unknown`).
 
-측정으로 검증한 두 가지 경계가 있습니다. 첫째, `git blame -w`는 공백만
-바뀐 포맷터 커밋을 이미 스스로 뚫습니다. 이 도구가 겨냥하는 것은 quote
-통일이나 trailing comma 삽입 같은 **토큰을 바꾸는** 포맷터와 rename·코드
-이동·squash·revert이며, `-w`로 해결되는 케이스는 대상이 아닙니다. 둘째,
-히스토리가 작으면(`git log --oneline -- <path> | wc -l`로 20개 이하) 이
-도구가 필요 없습니다. 커밋 3개짜리 fixture에서 스킬 없는 에이전트가 `git
-blame`과 `git log --oneline --all`을 써서 정답과 근거를 정확히 냈습니다.
+측정으로 검증한 경계가 하나 있습니다. `git blame -w`는 공백만 바뀐 포맷터
+커밋을 이미 스스로 뚫습니다. 이 도구가 겨냥하는 것은 quote 통일이나
+trailing comma 삽입 같은 **토큰을 바꾸는** 포맷터와 rename·코드 이동·
+squash·revert이며, `-w`로 해결되는 케이스는 대상이 아닙니다.
+
+tracer는 히스토리 크기와 무관하게 항상 실행합니다. 리포트, 기계 검증된
+근거, 붙여넣기용 결과물이 모두 이 실행에서 나오기 때문입니다. 히스토리
+크기가 바꾸는 것은 결과물을 만들지 여부가 아니라, 의도를 파악하는 방법입니다.
+먼저 히스토리 크기를 확인하세요:
+
+    git log --oneline --follow -- <path> | wc -l
+
+`--follow` 없이 세면 파일의 *현재* 경로에 닿은 커밋만 세어지므로, rename을
+거친 파일은 실제보다 적게 잡힙니다. 흔히 rename이 여러 번 있는 파일이 바로
+tracing이 제값을 하는 경우이니, 이 카운트를 잘못 내는 것은 이 점검이 감당할
+수 없는 실수입니다. 20개 이하면 tracer 실행에 더해 히스토리를 직접
+읽으세요:
+
+    git log -p --follow -- <path>
+
+이 크기에서는 tracer의 순위 후보보다 diff를 직접 읽은 결과가 의도 파악을
+이끌어야 더 빠르고 확실합니다. 커밋 3개짜리 fixture에서 스킬 없는 에이전트가
+`git blame`과 `git log`로 정답과 근거를 정확히 냈습니다. 20개를 넘으면
+`log -p`가 한 번에 다 읽히지 않으니, tracer의 `introduction_candidates`에
+의지하세요.
 
 이 도구가 제값을 하는 지점도 측정했습니다. 커밋 113개짜리 히스토리를
 시간 압박 속에서 조사시켰을 때, 스킬 없는 에이전트는 3번 중 2번 실패했습니다

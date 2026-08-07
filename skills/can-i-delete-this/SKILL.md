@@ -11,19 +11,41 @@ description: Use when the user asks whether some code can be deleted, why a line
 question. This skill answers "why does this line exist, and what breaks if I
 remove it", with commit references.
 
-## When you do not need this
+## The tracer always runs; the threshold decides how you read, not whether you report
 
-**Check history size first: `git log --oneline -- <path> | wc -l`.** Twenty
-commits or fewer, read the whole thing with `git log -p --follow -- <path>`
-instead of running the tracer; you will reach the right answer faster than
-any tooling. We measured this: on a three-commit fixture, an agent with no
-skill loaded found the real introducing commit, dismissed the formatter
-commit, and cited its evidence correctly. Past twenty, `log -p` stops fitting
-in a read end to end, and that is where the tracer earns its keep. (Twenty is
-a starting point, not a law; if a file's commits are unusually large or
-unusually terse, adjust by feel.)
+Run `trace.py` on every request, regardless of history size. It is what
+produces the report, the mechanically-checked evidence, and the artifact;
+none of that exists on any path that skips it. What the history size
+decides is where your own understanding of *why* the code exists comes
+from, not whether the deliverables get made.
 
-Run the tracer once the count above crosses the threshold, or when:
+**Check history size first: `git log --oneline --follow -- <path> | wc -l`.**
+Use `--follow`, not plain `-- <path>`: without it, the count only includes
+commits that touched the file's *current* path, so a file that was ever
+renamed comes back undercounted, sometimes drastically. A rename is exactly
+the case where a short-looking history can be hiding a real introducing
+commit further back, so this is not a corner case to shrug off; get the
+count right before you decide anything from it.
+
+- **Twenty commits or fewer:** in addition to running the tracer, read the
+  whole thing yourself with `git log -p --follow -- <path>`, and let that
+  reading, not the tracer's ranked candidates, drive your understanding of
+  intent. We measured this: on a three-commit fixture, an agent with no
+  skill loaded read the history directly, found the real introducing
+  commit, dismissed the formatter commit, and cited its evidence correctly.
+  At this size a human reading the actual diffs reaches a better answer
+  than ranked output, and saying so plainly is correct, not a failure. Feed
+  what you learn into the verdict; the tracer's JSON still supplies
+  `render.py` and `artifacts.py` with the material they need to produce the
+  report and the artifact.
+- **Past twenty:** `log -p` stops fitting in a read end to end, so the
+  tracer's `introduction_candidates` (already scored past noise) are your
+  primary evidence instead of your own reading. (Twenty is a starting
+  point, not a law; if a file's commits are unusually large or unusually
+  terse, adjust by feel.)
+
+Reach for the tracer's non-negotiable rules regardless of which of those two
+you are in, and also when:
 
 - `blame` lands on a formatter, rename or squash commit and you need the
   commit that actually introduced the code
@@ -31,12 +53,16 @@ Run the tracer once the count above crosses the threshold, or when:
   mechanically checked, a report, and text to paste
 
 **Every non-negotiable rule below applies on both paths.** Reading history
-directly instead of running the tracer does not relax the requirement to
-cite a commit, name the target, leave the user's files untouched, or answer
-in the user's language; it only changes which command produces the evidence.
-
-Say so plainly when the history is small. Recommending `git log -p` instead of
-running the tracer is a correct outcome, not a failure.
+directly instead of leaning on the tracer's ranked candidates does not relax
+the requirement to cite a commit, name the target, leave the user's files
+untouched, produce a report, or answer in the user's language; it only
+changes which reading produces your understanding of intent. If the commit
+you cite from your own reading never showed up in `introduction_candidates`
+or `blame_candidates` (this can happen: a rename bundled with unrelated
+changes can defeat blame's own move detection, past what pickaxe's
+current-content needles can recover), cite it anyway and say where you
+found it; `citation.py`'s resolution accepts a commit described this way,
+not only ones the tracer's own searches surfaced.
 
 ## Non-negotiable rules
 
@@ -87,6 +113,12 @@ running the tracer is a correct outcome, not a failure.
    tests added in the same commit, the PR body, linked issues, adjacent
    comments.
 6. Write the verdict JSON (schema in scripts/verdict.py) and validate it.
+   If the commit you are citing came from your own reading of history
+   rather than from `introduction_candidates` or `blame_candidates`, add
+   `subject`, `date`, `author` (and `author_email` if you have it) to that
+   evidence item alongside `type` and `ref`; that is what lets `render.py`
+   and `artifacts.py` render it as the answer instead of reporting it as an
+   unresolved citation.
 7. Render and hand over:
 
    ```
