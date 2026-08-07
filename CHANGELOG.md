@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.1 - 2026-08-07
+
+Field-report fix: a real trace on a file with two renames was miscounted
+by the size check, which then skipped the tracer and produced no report.
+
+- Fixed the history-size threshold command in `SKILL.md`, `README.md` and
+  `strategy-tree.md` from `git log --oneline -- <path> | wc -l` to
+  `git log --oneline --follow -- <path> | wc -l`. Without `--follow`, the
+  count only includes commits touching the file's *current* path, so a
+  renamed file comes back undercounted; the field case counted 4 commits
+  without `--follow` against a real count of 21 with it, and the tracer
+  was skipped as a result.
+- Restructured the "when you do not need this" framing into "the tracer
+  always runs; the threshold decides how you read, not whether you
+  report" in `SKILL.md`, `README.md` (including its Korean summary) and
+  `strategy-tree.md`. The tracer now always runs regardless of history
+  size, because it is what produces the report, the mechanically-checked
+  evidence and the artifact; previously a short history skipped the
+  tracer entirely, which meant it also skipped every deliverable. The
+  threshold still decides where the agent's understanding of intent comes
+  from: past it, the tracer's ranked candidates; at or under it, the
+  agent's own reading of `git log -p --follow`, which remains the more
+  reliable source at that size and is still worth saying so plainly.
+- Fixed a citation gap this restructuring exposed: a commit the agent
+  found by reading history directly, that never surfaced through blame,
+  pickaxe or line-history at all (a rename bundled with unrelated change
+  can defeat blame's own move detection, past what pickaxe's
+  current-content needles recover), used to resolve exactly like a stale
+  or mistyped citation, an "unresolved" attribution that neither the HTML
+  report nor the paste-ready artifact would name. `citation.py` now
+  accepts a `commit` evidence item's own `subject`/`date`/`author` fields
+  as a fallback candidate when the cited sha is in neither
+  `introduction_candidates` nor `blame_candidates`, and `render.py`/
+  `artifacts.py` render it as the real introduction the same way. No
+  schema change: `verdict.py` already accepted extra keys on an evidence
+  item; this only teaches the two consumers to look for them.
+- Added `build_two_renames` to `tests/fixtures/make_fixture_repo.py`, and
+  `TestTwoRenames` in `tests/test_trace_cases.py`, pinning that a file
+  renamed twice still resolves to its real introducing commit through the
+  tracer and that its `--follow` history count exceeds its no-follow
+  count. Added `TestHistoryReadCitation` in `tests/test_citation_resolution.py`
+  for the citation-gap fix above.
+
 ## 0.2.0 - 2026-08-06
 
 Report and search-quality release, driven by a first run against a real
