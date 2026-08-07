@@ -492,6 +492,82 @@ def build_f4(dest: str) -> dict:
             "real_sha": squash_sha, "pr_number": 2211, "noise_sha": squash_sha}
 
 
+def build_two_renames(dest: str) -> dict:
+    """A file renamed twice, each rename plain (no bundled unrelated edits),
+    with a few unrelated edits at each path in between.
+
+    Regression fixture for the field report behind the 0.2.1 release: a real
+    trace was miscounted at 4 commits by `git log --oneline -- <path>` (no
+    `--follow`), when the actual lineage was 21 commits once renames were
+    followed, because that command only ever counts commits that touched the
+    file's *current* path. This fixture reproduces the shape, not the exact
+    counts: `git log --oneline -- <path>` (no `--follow`) counts only the
+    commits made after the second rename, while `git log --oneline --follow
+    -- <path>` (or `trace()`, which never relies on path-scoped counting to
+    begin with) sees the full lineage back to the real introducing commit.
+
+    Both renames are plain `git mv` with no other change bundled into the
+    same commit, deliberately unlike F2's bundled rename: F2 exists to prove
+    a *bundled* rename can defeat `git blame -w -C -C -C`'s own move
+    detection; this fixture exists to prove the *no-follow commit count* is
+    wrong regardless of whether blame itself is defeated. A plain rename
+    lets blame follow it on its own (see F2's docstring), so `real_sha`
+    reaches `introduction_candidates` here via blame, with nothing left for
+    the pickaxe or line-history fallback to do; that is the point, not an
+    oversight. If a future change to `gitq.blame_shas` ever weakens plain-
+    rename tracking, `TestTwoRenames.test_finds_real_commit_despite_two_renames`
+    below would catch it.
+    """
+    repo = _init(dest, "two_renames")
+    target = repo / "payment.py"
+    target.write_text("def charge(order):\n    return order.total\n")
+    _commit(repo, "feat: add charge", "2020-01-05T10:00:00")
+
+    target.write_text(
+        "def charge(order):\n"
+        "    if order.region == 'EU':\n"
+        "        return order.total_with_vat\n"
+        "    return order.total\n"
+    )
+    real_sha = _commit(repo, "feat: apply EU VAT (#901)", "2020-04-11T10:00:00")
+
+    for i, date in enumerate([
+        "2020-05-01T10:00:00", "2020-06-01T10:00:00", "2020-07-01T10:00:00",
+    ]):
+        target.write_text(target.read_text() + "# note {}\n".format(i))
+        _commit(repo, "chore: tweak payment note {}".format(i), date)
+
+    billing = repo / "billing_payment.py"
+    _git(repo, "mv", "payment.py", "billing_payment.py")
+    _commit(repo, "refactor: move payment into billing", "2021-01-01T10:00:00")
+
+    for i, date in enumerate([
+        "2021-02-01T10:00:00", "2021-03-01T10:00:00", "2021-04-01T10:00:00",
+    ]):
+        billing.write_text(billing.read_text() + "# billing note {}\n".format(i))
+        _commit(repo, "chore: tweak billing note {}".format(i), date)
+
+    core_dir = repo / "core"
+    core_dir.mkdir()
+    final = core_dir / "billing.py"
+    _git(repo, "mv", "billing_payment.py", "core/billing.py")
+    _commit(repo, "refactor: consolidate billing under core", "2022-01-01T10:00:00")
+
+    for i, date in enumerate(["2022-02-01T10:00:00", "2022-03-01T10:00:00"]):
+        final.write_text(final.read_text() + "# core note {}\n".format(i))
+        _commit(repo, "chore: tweak core billing note {}".format(i), date)
+
+    lines = final.read_text().splitlines()
+    line = next(i for i, l in enumerate(lines, 1) if "total_with_vat" in l)
+
+    return {
+        "repo": str(repo),
+        "path": "core/billing.py",
+        "line": line,
+        "real_sha": real_sha,
+    }
+
+
 def build_candidate_cap_probe(dest: str) -> dict:
     """A target line whose distinctive token also appears, one at a time,
     in three unrelated commits touching three unrelated files.

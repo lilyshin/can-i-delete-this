@@ -173,6 +173,83 @@ class TestUnresolvedCitation(unittest.TestCase):
         self.assertIn("reason unknown", out)
 
 
+class TestHistoryReadCitation(unittest.TestCase):
+    """0.2.1 regression: a verdict can cite a commit the agent found by
+    reading `git log -p --follow` directly (SKILL.md's short-history path)
+    that none of trace.py's own search paths (blame, pickaxe, line-history)
+    ever surfaced as a candidate -- so it lives in neither
+    introduction_candidates nor blame_candidates. Before this fix, that
+    citation resolved exactly like a stale or mistyped ref: "unresolved",
+    the timeline never showed the commit at all, and the artifact said the
+    attribution could not be verified, even though the agent had already
+    verified it by hand. This trace is hand-built, not derived from a git
+    fixture, because the point under test is citation.py/render.py/
+    artifacts.py's handling of a sha absent from both lists, not trace.py's
+    search behavior; TestTwoRenames in test_trace_cases.py is what pins
+    that the tracer's own searches keep succeeding on a real renamed-file
+    history, so this scenario needs deliberate hand construction, not a
+    fixture where the tracer would have simply found the commit itself.
+    """
+
+    def setUp(self):
+        self.sha = "9f3a1b2c4d5e6f708192a3b4c5d6e7f809192a3"
+        self.trace = {
+            "target": {"path": "legacy/module.py", "start": 42, "end": 42},
+            "introduction_candidates": [], "co_changed": [],
+            "blame_candidates": [], "revert_chain": [], "notes": [],
+            "limits": {"truncated": False, "max_commits": 5000,
+                       "since": None, "candidate_cap_reached": False},
+        }
+
+    def _verdict(self):
+        return {
+            "grade": "danger",
+            "summary": "Found by reading history directly past two renames.",
+            "evidence": [{
+                "type": "commit", "ref": self.sha[:7],
+                "note": "found via git log -p --follow, not the tracer",
+                "subject": "hotfix: guard against replayed session token",
+                "date": "2019-03-04T00:00:00",
+                "author": "Ada Author",
+                "author_email": "ada@example.com",
+            }],
+            "conditions": [],
+            "artifact": {"kind": "keep-comment", "content": "// KEEP: placeholder"},
+        }
+
+    def test_render_marks_the_history_read_commit_real(self):
+        html = render.render(self.trace, self._verdict())
+        rows = _rows_mentioning(html, self.sha)
+        self.assertEqual(len(rows), 1, "the cited commit must appear exactly once")
+        self.assertIn('class="row real"', rows[0])
+        self.assertIn('class="tag real">real introduction', rows[0])
+        self.assertIn("guard against replayed session token", rows[0])
+
+    def test_artifact_names_the_history_read_commit_not_unresolved(self):
+        verdict = self._verdict()
+        out = artifacts.skeleton(verdict["grade"], self.trace, verdict["evidence"])
+        self.assertIn(self.sha[:7], out)
+        self.assertIn("guard against replayed session token", out)
+        self.assertNotIn("could not be verified", out)
+        self.assertNotIn("reason unknown", out)
+
+    def test_a_bare_ref_with_no_descriptive_fields_still_reports_unresolved(self):
+        """The fallback only fires when the evidence item actually carries
+        descriptive fields; a bare ref with nothing else must still report
+        as unresolved, exactly like TestUnresolvedCitation, so a stale or
+        mistyped short sha does not accidentally start rendering as real
+        just because this fallback exists.
+        """
+        verdict = _verdict_citing("deadbee")
+        out = artifacts.skeleton(verdict["grade"], self.trace, verdict["evidence"])
+        self.assertIn("deadbee", out)
+        self.assertTrue(
+            "could not" in out.lower() or "not found" in out.lower()
+            or "not resolve" in out.lower() or "unresolved" in out.lower())
+        html = render.render(self.trace, verdict)
+        self.assertEqual(_rows_mentioning(html, "deadbee0000000000000000000000000000000"), [])
+
+
 class TestNoDuplicateRow(unittest.TestCase):
     """F5's reintroduction commit is discoverable straight through blame
     (trace.py's own `add()` folds a non-noise blame result into

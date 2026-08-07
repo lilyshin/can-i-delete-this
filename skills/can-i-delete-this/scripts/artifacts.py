@@ -24,26 +24,30 @@ CLIPBOARD_TOOLS = (
 _TEST_DIR_NAMES = {"tests", "test", "spec", "specs", "__tests__"}
 
 
-def _top(trace_data, refs):
+def _top(trace_data, refs, evidence=None):
     """Pick the candidate the artifact should describe, and how it was found.
 
     Returns (candidate, status):
 
     - "cited": `candidate` is what the verdict's evidence cites, found by
-      citation.find_cited in either introduction_candidates or
-      blame_candidates. See citation.py for why the cited commit is not
-      guaranteed to be in the first list: noise filtering can remove the
-      real commit from introduction_candidates entirely (the N10 squash
-      case is the common one), and SKILL.md's workflow then has the agent
-      cite it out of blame_candidates anyway, after reading its diff.
+      citation.find_cited in introduction_candidates, blame_candidates, or
+      (see citation.py's module docstring) synthesized straight from the
+      evidence item's own subject/date/author when the agent found this
+      commit by reading history directly and neither list ever turned it
+      up. See citation.py for why the cited commit is not guaranteed to be
+      in the first list: noise filtering can remove the real commit from
+      introduction_candidates entirely (the N10 squash case is the common
+      one), and SKILL.md's workflow then has the agent cite it out of
+      blame_candidates anyway, after reading its diff.
     - "unresolved": the verdict cited a commit (`refs` is non-empty), but
-      it names no commit in either list. verdict.py's schema only checks
-      that a ref is a non-empty string, not that it names a real commit in
-      this trace, so a stale or mistyped ref reaches here as a citation
-      that resolves to nothing. `candidate` is {}. Substituting some other
-      candidate here would be exactly the M2 misattribution this function
-      exists to prevent, so callers must say the citation did not resolve,
-      not guess a replacement.
+      it names no commit anywhere: not in either candidate list, and not
+      described well enough in `evidence` to synthesize a stand-in either.
+      verdict.py's schema only checks that a ref is a non-empty string, not
+      that it names a real commit in this trace, so a stale or mistyped ref
+      reaches here as a citation that resolves to nothing. `candidate` is
+      {}. Substituting some other candidate here would be exactly the M2
+      misattribution this function exists to prevent, so callers must say
+      the citation did not resolve, not guess a replacement.
     - "fallback": no citation was made at all (`refs` is empty).
       introduction_candidates is sorted chronologically, oldest first, and
       the oldest entry is used for lack of anything better, same as before
@@ -56,7 +60,7 @@ def _top(trace_data, refs):
     """
     cands = trace_data.get("introduction_candidates") or []
     if refs:
-        found, _source = citation.find_cited(trace_data, refs)
+        found, _source = citation.find_cited(trace_data, refs, evidence=evidence)
         if found is not None:
             return found, "cited"
         return {}, "unresolved"
@@ -149,7 +153,7 @@ def skeleton(grade, trace_data, evidence=None):
     """
     target = trace_data.get("target", {})
     refs = citation.commit_refs(evidence)
-    top, status = _top(trace_data, refs)
+    top, status = _top(trace_data, refs, evidence=evidence)
 
     if status == "unresolved":
         return _unresolved_citation_text(grade, target, refs)

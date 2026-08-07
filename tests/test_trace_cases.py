@@ -1,3 +1,4 @@
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -92,6 +93,40 @@ class TestF4Squash(CaseMixin, unittest.TestCase):
         info, result = self.build()
         subjects = [b["subject"] for b in result["blame_candidates"]]
         self.assertTrue(any("(#2211)" in s for s in subjects))
+
+
+class TestTwoRenames(CaseMixin, unittest.TestCase):
+    """Regression fixture for the field report behind 0.2.1: SKILL.md's
+    threshold command, `git log --oneline -- <path>` (no `--follow`),
+    undercounts a file's real history whenever it was renamed, because it
+    only ever counts commits touching the file's *current* path. This pins
+    two things: the undercount itself (so a future doc or command change
+    that quietly drops `--follow` from the fixed threshold command loses the
+    contrast this test checks for), and that the tracer finds the real
+    introducing commit regardless -- it never relies on that count at all,
+    which is the whole point of always running it rather than gating it on
+    a possibly-wrong commit tally.
+    """
+    builder = "build_two_renames"
+
+    def test_finds_real_commit_despite_two_renames(self):
+        info, result = self.build()
+        self.assert_real_commit_found(info, result)
+
+    def test_no_follow_count_undercounts_the_follow_count(self):
+        info, _result = self.build()
+        no_follow = subprocess.run(
+            ["git", "log", "--oneline", "--", info["path"]],
+            cwd=info["repo"], capture_output=True, text=True, check=True,
+        ).stdout.strip().splitlines()
+        follow = subprocess.run(
+            ["git", "log", "--oneline", "--follow", "--", info["path"]],
+            cwd=info["repo"], capture_output=True, text=True, check=True,
+        ).stdout.strip().splitlines()
+        self.assertGreater(
+            len(follow), len(no_follow),
+            "a renamed file's --follow history must exceed its no-follow "
+            "count, or this fixture no longer demonstrates the undercount")
 
 
 if __name__ == "__main__":

@@ -12,14 +12,16 @@ list membership alone:
 - A candidate renders bold and coloured, tagged "real introduction", when
   its sha matches a `commit` entry in `verdict["evidence"]` (matched on
   prefix, since evidence refs are usually short shas), whether that
-  candidate lives in `introduction_candidates` or only in
-  `blame_candidates` (see `citation.py` for why a cited commit can live in
-  either list -- the short version: noise filtering can remove the real
-  commit from `introduction_candidates` entirely, and the workflow this
-  skill teaches then has the agent cite it out of `blame_candidates`
-  anyway, after reading its diff). Every other introduction candidate
-  renders as a plain row: it survived noise filtering, but the verdict did
-  not cite it.
+  candidate lives in `introduction_candidates`, only in `blame_candidates`,
+  or in neither (see `citation.py` for why a cited commit can live in
+  either list, or nowhere at all -- the short version: noise filtering can
+  remove the real commit from `introduction_candidates` entirely, and the
+  workflow this skill teaches then has the agent cite it out of
+  `blame_candidates` anyway, after reading its diff; on a short history the
+  agent may instead cite a commit none of trace.py's own searches ever
+  turned up, described by the evidence item's own subject/date/author).
+  Every other introduction candidate renders as a plain row: it survived
+  noise filtering, but the verdict did not cite it.
 - A `blame_candidates` entry renders greyed-out and struck through, with
   the noise category that disqualified it, when `noise.is_noise` is true
   and the verdict did not cite it. A blame candidate that scored as
@@ -60,6 +62,7 @@ _WHY_LABEL = {
     "pickaxe": "found via pickaxe (blame missed it)",
     "line-history": "found via line history",
     "follow": "found via rename-follow",
+    "history-read": "found by reading history directly, not by the tracer",
 }
 
 # History rows at or below this count render flat, exactly as before this
@@ -323,8 +326,9 @@ def render(trace_data, verdict_data):
     # cited commit is not guaranteed to be in the first list at all -- see
     # this module's docstring and citation.py's for the N10 case where it
     # is not.
-    commit_refs = citation.commit_refs(verdict_data.get("evidence"))
-    real_shas = citation.real_shas(trace_data, commit_refs)
+    verdict_evidence = verdict_data.get("evidence")
+    commit_refs = citation.commit_refs(verdict_evidence)
+    real_shas = citation.real_shas(trace_data, commit_refs, evidence=verdict_evidence)
     blame_by_sha = {b.get("sha"): b for b in trace_data.get("blame_candidates", [])}
 
     # Order matters for the argument: the real introducing commit(s) lead
@@ -378,6 +382,21 @@ def render(trace_data, verdict_data):
             continue
         rendered.add(sha)
         rows.append((True, _revert_row(r)))  # revert chain is always visible
+
+    # A commit the agent found by reading history directly (SKILL.md's
+    # short-history path) and cited with its own subject/date/author, that
+    # never surfaced through blame, pickaxe or line-history at all: none of
+    # the three loops above ever see it, since none of trace_data's own
+    # lists contain it. Without this, a real citation the agent verified by
+    # hand would simply vanish from the timeline instead of rendering as the
+    # answer. Always visible, like the other "always" sources above, and
+    # only added when it is not already covered by one of them.
+    for e in citation.evidence_candidates(verdict_evidence):
+        sha = e.get("sha")
+        if sha in rendered or sha not in real_shas:
+            continue
+        rendered.add(sha)
+        rows.append((True, _real_row(e)))
 
     always_rows = [h for always, h in rows if always]
     other_rows = [h for always, h in rows if not always]
