@@ -98,10 +98,30 @@ That restructuring exposed a second, previously latent gap: a commit an
 agent found by reading history directly, that the tracer's own searches
 (blame, pickaxe, line-history) never surfaced at all, used to resolve
 exactly like a stale or mistyped citation, an "unresolved" attribution
-naming nothing. `citation.py` now accepts a commit evidence item's own
-`subject`/`date`/`author` fields as a fallback source for exactly this
-case; see `tests/test_citation_resolution.py`'s `TestHistoryReadCitation`
-and `tests/test_trace_cases.py`'s `TestTwoRenames`.
+naming nothing.
+
+The first fix for that gap was itself wrong, caught in review before this
+release shipped rather than in a second field report. It taught
+`citation.py` to read a commit evidence item's own `subject`/`date`/
+`author` fields as a fallback source when the sha matched neither
+candidate list. That broke the one boundary this project cannot trade
+away: facts come from git, agents make judgement calls about what the
+facts mean. Handed a nonexistent sha with a fabricated subject
+("`deadbee`", "fix: patch critical auth bypass (#9999)", author "Ghost"),
+that version rendered it bold, tagged "real introduction", indistinguishable
+from a commit the tracer had actually verified, and the artifact printed
+the fabricated subject as fact. The fix for the fix moved the verification
+into `trace.py` instead: a new `--include-commit <sha>` option
+(`include_commits` in `trace()`) looks the sha up with `gitq.commit_meta`
+against the real repository, refuses it into `notes` rather than silently
+if it does not exist, and only once verified adds it to
+`introduction_candidates` with `why: "cited"` and metadata read from git.
+`citation.py` went back to matching only the two candidate lists, exactly
+as it was before either fix; it never reads evidence-supplied descriptive
+fields at all. See `tests/test_citation_resolution.py`'s
+`TestExplicitlyIncludedCommit` (the corrected mechanism) and
+`TestFabricatedCitationIsRejected` (the exact `deadbee` scenario, pinned so
+it cannot regress), and `tests/test_trace_cases.py`'s `TestTwoRenames`.
 
 ## What the baseline observations actually concluded
 

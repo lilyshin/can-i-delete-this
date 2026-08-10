@@ -175,17 +175,22 @@ because the investigation was thorough; thoroughness is not evidence.
 
 ## 8. Grade and hand over
 
-Write the verdict object (schema enforced by `scripts/verdict.py`), run it
-through `validate()`, then:
-
 If the commit you are citing is the one you found by reading history
 directly (a short history under SKILL.md's threshold) rather than one
-this tree's own steps surfaced, give its evidence item `subject`, `date`
-and `author` alongside `type` and `ref`. `citation.py` checks
-`introduction_candidates` and `blame_candidates` first, and only falls
-back to those fields, synthesizing a stand-in candidate from them, when
-the cited sha is in neither; a bare `ref` with none of those fields
-resolves as an unverified citation instead, exactly as before.
+this tree's own steps surfaced, do not write it into the verdict yet.
+Re-run `trace.py` once more with `--include-commit <sha>` (repeatable)
+first. That looks the sha up against the repository with
+`gitq.commit_meta`; a sha that does not exist is refused there (recorded in
+`notes`, not silently dropped) rather than trusted on your say-so, and a
+real sha gets added to `introduction_candidates` with `why: "cited"` and
+its actual subject/date/author read from git, not from anything you typed.
+`citation.py` itself only ever matches `introduction_candidates` and
+`blame_candidates`; it does not, and must not, read descriptive fields off
+an evidence item, since those came from the agent, not from git. Only once
+the re-run confirms the commit does the citation belong in the verdict.
+
+Write the verdict object (schema enforced by `scripts/verdict.py`), run it
+through `validate()`, then:
 
 ```
 python3 render.py --trace t.json --verdict v.json

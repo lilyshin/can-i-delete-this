@@ -173,81 +173,128 @@ class TestUnresolvedCitation(unittest.TestCase):
         self.assertIn("reason unknown", out)
 
 
-class TestHistoryReadCitation(unittest.TestCase):
-    """0.2.1 regression: a verdict can cite a commit the agent found by
-    reading `git log -p --follow` directly (SKILL.md's short-history path)
-    that none of trace.py's own search paths (blame, pickaxe, line-history)
-    ever surfaced as a candidate -- so it lives in neither
-    introduction_candidates nor blame_candidates. Before this fix, that
-    citation resolved exactly like a stale or mistyped ref: "unresolved",
-    the timeline never showed the commit at all, and the artifact said the
-    attribution could not be verified, even though the agent had already
-    verified it by hand. This trace is hand-built, not derived from a git
-    fixture, because the point under test is citation.py/render.py/
-    artifacts.py's handling of a sha absent from both lists, not trace.py's
-    search behavior; TestTwoRenames in test_trace_cases.py is what pins
-    that the tracer's own searches keep succeeding on a real renamed-file
-    history, so this scenario needs deliberate hand construction, not a
-    fixture where the tracer would have simply found the commit itself.
+class TestExplicitlyIncludedCommit(unittest.TestCase):
+    """0.2.1 regression, corrected design: a commit an agent finds by
+    reading history directly, that trace.py's own searches (blame, pickaxe,
+    line-history) never surfaced, must still be able to render and produce
+    an artifact naming it -- but the fact of what that commit *is* must
+    come from git, never from the verdict's own evidence text. An agent can
+    type anything into an evidence item's `note` (or any other field); a
+    fabricated subject on a real, cited commit must not leak into the
+    report just because it happened to be typed there. See
+    TestFabricatedCitationIsRejected below for the sibling regression: a
+    fabricated subject on a commit that does not exist at all.
+
+    The fix routes through trace.py, not citation.py: `--include-commit
+    <sha>` (`include_commits=[...]` in trace()) looks the sha up with
+    `gitq.commit_meta` against the real repository and, once verified, adds
+    it to `introduction_candidates` with `why: "cited"`. citation.py itself
+    is back to matching only `introduction_candidates` and
+    `blame_candidates`, exactly as it was before this correction: no third
+    source, no reading of evidence-supplied descriptive fields anywhere.
+
+    Uses the real F4 fixture (a squash commit, N10-flagged, so by default
+    `introduction_candidates` comes up empty) for two things at once:
+    proving an explicitly included commit that noise filtering would
+    otherwise exclude still becomes a candidate, and proving its rendered
+    subject/date/author come from git even when the verdict's own evidence
+    carries a different, fabricated subject alongside the real ref.
     """
 
     def setUp(self):
-        self.sha = "9f3a1b2c4d5e6f708192a3b4c5d6e7f809192a3"
-        self.trace = {
-            "target": {"path": "legacy/module.py", "start": 42, "end": 42},
-            "introduction_candidates": [], "co_changed": [],
-            "blame_candidates": [], "revert_chain": [], "notes": [],
-            "limits": {"truncated": False, "max_commits": 5000,
-                       "since": None, "candidate_cap_reached": False},
-        }
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.info = make_fixture_repo.build_f4(self.tmp.name)
 
-    def _verdict(self):
-        return {
+    def test_include_commit_surfaces_a_noise_filtered_commit(self):
+        result = tracer.trace(self.info["repo"], self.info["path"],
+                               self.info["line"], self.info["line"],
+                               include_commits=[self.info["real_sha"]])
+        cand = next((c for c in result["introduction_candidates"]
+                     if c["sha"] == self.info["real_sha"]), None)
+        self.assertIsNotNone(cand, "explicitly included commit must become a candidate")
+        self.assertEqual(cand["why"], "cited")
+        self.assertEqual(cand["subject"],
+                         "Rotate token on idle sessions and reformat module (#2211)")
+
+    def test_render_and_artifact_use_git_metadata_not_the_evidence_note(self):
+        result = tracer.trace(self.info["repo"], self.info["path"],
+                               self.info["line"], self.info["line"],
+                               include_commits=[self.info["real_sha"]])
+        verdict = {
             "grade": "danger",
-            "summary": "Found by reading history directly past two renames.",
+            "summary": "Found by reading history directly; blame and pickaxe missed it.",
             "evidence": [{
-                "type": "commit", "ref": self.sha[:7],
+                "type": "commit", "ref": self.info["real_sha"][:7],
                 "note": "found via git log -p --follow, not the tracer",
-                "subject": "hotfix: guard against replayed session token",
-                "date": "2019-03-04T00:00:00",
-                "author": "Ada Author",
-                "author_email": "ada@example.com",
+                # Deliberately a different, fabricated subject: this must
+                # never win over the real git subject once the commit is
+                # verified through --include-commit.
+                "subject": "haxxor: totally fake subject",
             }],
             "conditions": [],
             "artifact": {"kind": "keep-comment", "content": "// KEEP: placeholder"},
         }
-
-    def test_render_marks_the_history_read_commit_real(self):
-        html = render.render(self.trace, self._verdict())
-        rows = _rows_mentioning(html, self.sha)
-        self.assertEqual(len(rows), 1, "the cited commit must appear exactly once")
+        html = render.render(result, verdict)
+        rows = _rows_mentioning(html, self.info["real_sha"])
+        self.assertEqual(len(rows), 1)
         self.assertIn('class="row real"', rows[0])
-        self.assertIn('class="tag real">real introduction', rows[0])
-        self.assertIn("guard against replayed session token", rows[0])
+        self.assertIn("Rotate token on idle sessions", rows[0])
+        self.assertNotIn("totally fake subject", rows[0])
 
-    def test_artifact_names_the_history_read_commit_not_unresolved(self):
-        verdict = self._verdict()
-        out = artifacts.skeleton(verdict["grade"], self.trace, verdict["evidence"])
-        self.assertIn(self.sha[:7], out)
-        self.assertIn("guard against replayed session token", out)
-        self.assertNotIn("could not be verified", out)
-        self.assertNotIn("reason unknown", out)
+        out = artifacts.skeleton(verdict["grade"], result, verdict["evidence"])
+        self.assertIn(self.info["real_sha"][:7], out)
+        self.assertIn("Rotate token on idle sessions", out)
+        self.assertNotIn("totally fake subject", out)
 
-    def test_a_bare_ref_with_no_descriptive_fields_still_reports_unresolved(self):
-        """The fallback only fires when the evidence item actually carries
-        descriptive fields; a bare ref with nothing else must still report
-        as unresolved, exactly like TestUnresolvedCitation, so a stale or
-        mistyped short sha does not accidentally start rendering as real
-        just because this fallback exists.
-        """
-        verdict = _verdict_citing("deadbee")
-        out = artifacts.skeleton(verdict["grade"], self.trace, verdict["evidence"])
-        self.assertIn("deadbee", out)
+
+class TestFabricatedCitationIsRejected(unittest.TestCase):
+    """The exact scenario reported against the 0.2.1 draft: a nonexistent
+    sha ("deadbee") cited with a fully fabricated subject/date/author.
+    Without --include-commit ever verifying it against the repository,
+    this must resolve exactly like any other unresolved citation: no
+    candidate, no row, and the fabricated subject must not appear anywhere
+    in the report or the artifact.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.info = make_fixture_repo.build_f1(self.tmp.name)
+        self.trace = tracer.trace(self.info["repo"], self.info["path"],
+                                   self.info["line"], self.info["line"])
+        self.evidence = [{
+            "type": "commit", "ref": "deadbee", "note": "보안 수정",
+            "subject": "fix: patch critical auth bypass (#9999)",
+            "date": "2021-01-01T00:00:00+09:00", "author": "Ghost",
+        }]
+
+    def test_fabricated_sha_produces_no_candidate_via_trace(self):
+        result = tracer.trace(self.info["repo"], self.info["path"],
+                               self.info["line"], self.info["line"],
+                               include_commits=["deadbee"])
+        shas = [c["sha"] for c in result["introduction_candidates"]]
+        self.assertNotIn("deadbee", shas)
+        self.assertTrue(
+            any("deadbee" in n for n in result["notes"]),
+            "a nonexistent --include-commit sha must be noted, not silently dropped")
+
+    def test_render_does_not_show_the_fabricated_subject(self):
+        verdict = {
+            "grade": "danger", "summary": "fabricated citation",
+            "evidence": self.evidence, "conditions": [],
+            "artifact": {"kind": "keep-comment", "content": "// KEEP: placeholder"},
+        }
+        html = render.render(self.trace, verdict)
+        self.assertNotIn("patch critical auth bypass", html)
+        self.assertNotIn('class="row real"', html)
+
+    def test_artifact_does_not_name_the_fabricated_commit(self):
+        out = artifacts.skeleton("danger", self.trace, self.evidence)
+        self.assertNotIn("patch critical auth bypass", out)
         self.assertTrue(
             "could not" in out.lower() or "not found" in out.lower()
             or "not resolve" in out.lower() or "unresolved" in out.lower())
-        html = render.render(self.trace, verdict)
-        self.assertEqual(_rows_mentioning(html, "deadbee0000000000000000000000000000000"), [])
 
 
 class TestNoDuplicateRow(unittest.TestCase):

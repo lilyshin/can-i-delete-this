@@ -179,7 +179,7 @@ def _select_needles(repo, path, start, end):
 
 
 def trace(repo, path, start, end, *, max_commits=5000, since=None,
-          max_candidates=200):
+          max_candidates=200, include_commits=None):
     notes = []
     cache = {}
     blame_candidates = []
@@ -254,6 +254,42 @@ def trace(repo, path, start, end, *, max_commits=5000, since=None,
             add(sha, "line-history")
     except RuntimeError as exc:
         notes.append("line history unavailable: {}".format(exc))
+
+    # A commit an agent names explicitly (SKILL.md's short-history path,
+    # where `git log -p --follow` surfaced a commit that blame, pickaxe and
+    # line-history above never touched at all, most often a rename bundling
+    # enough unrelated change to defeat blame's own move detection). This is
+    # the one place facts are allowed to originate from something other than
+    # this function's own git searches, but the fact itself still has to
+    # come from git: `_cached_meta_and_noise` below calls `gitq.commit_meta`,
+    # which fails loudly on a sha that does not exist in this repository, so
+    # a fabricated or mistyped sha is rejected here, recorded in `notes`, and
+    # never becomes a candidate. It is deliberately not routed through
+    # `add()`: unlike a blame/pickaxe/line-history hit, an explicitly named
+    # commit is never noise-filtered out (SKILL.md's own workflow already
+    # asks agents to cite a noise-flagged N10 squash commit when its diff,
+    # not its message, is what actually introduced the target lines, and a
+    # commit an agent points at by name deserves the same trust), and it is
+    # exempt from the candidate cap for the same reason blame is: naming one
+    # specific commit is a deliberate, bounded addition, not the kind of
+    # unbounded search result the cap exists to bound.
+    for raw_sha in include_commits or ():
+        candidate_sha = (raw_sha or "").strip()
+        if not candidate_sha:
+            continue
+        try:
+            c, _ = _cached_meta_and_noise(repo, candidate_sha, cache)
+        except RuntimeError as exc:
+            notes.append(
+                "cited commit {!r} not found in this repository; ignored: {}"
+                .format(candidate_sha, exc)
+            )
+            continue
+        encountered.add(c.sha)
+        if c.sha in seen:
+            continue
+        seen.add(c.sha)
+        candidates.append(_describe(repo, c.sha, "cited", cache))
 
     candidates.sort(key=lambda c: c["date"])
 
@@ -342,6 +378,14 @@ def main():
     ap.add_argument("--since", default=None,
                      help="e.g. '3 years ago'; unset means no time bound")
     ap.add_argument("--max-candidates", type=int, default=200)
+    ap.add_argument(
+        "--include-commit", action="append", dest="include_commits",
+        default=None, metavar="SHA",
+        help="add SHA to introduction_candidates (why: 'cited'), verified "
+             "against this repository's own history; repeatable. For a "
+             "commit an agent found by reading history directly that blame, "
+             "pickaxe and line-history did not surface on their own.",
+    )
     args = ap.parse_args()
 
     try:
@@ -361,6 +405,7 @@ def main():
             args.repo, args.file, start, end,
             max_commits=args.max_commits, since=args.since,
             max_candidates=args.max_candidates,
+            include_commits=args.include_commits,
         )
     except gitq.GitWriteAttempt:
         raise

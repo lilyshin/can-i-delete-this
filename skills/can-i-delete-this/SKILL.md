@@ -57,12 +57,18 @@ directly instead of leaning on the tracer's ranked candidates does not relax
 the requirement to cite a commit, name the target, leave the user's files
 untouched, produce a report, or answer in the user's language; it only
 changes which reading produces your understanding of intent. If the commit
-you cite from your own reading never showed up in `introduction_candidates`
+you found by your own reading never showed up in `introduction_candidates`
 or `blame_candidates` (this can happen: a rename bundled with unrelated
 changes can defeat blame's own move detection, past what pickaxe's
-current-content needles can recover), cite it anyway and say where you
-found it; `citation.py`'s resolution accepts a commit described this way,
-not only ones the tracer's own searches surfaced.
+current-content needles can recover), **do not cite it from memory.**
+Re-run the tracer with `--include-commit <sha>` (repeatable) before you
+write the verdict; it looks the sha up against the repository with
+`gitq.commit_meta` and, once verified, adds it to `introduction_candidates`
+with `why: "cited"`. Only a commit `trace.py` itself has confirmed exists,
+with subject/date/author it read from git, may ever be cited as evidence;
+a subject you remember or paraphrase from your own reading is not a
+substitute; asking the tracer to verify it costs one more short run at this
+history size.
 
 ## Non-negotiable rules
 
@@ -112,14 +118,16 @@ not only ones the tracer's own searches surfaced.
 5. Recover intent. Commit subjects are usually useless. Prefer, in order:
    tests added in the same commit, the PR body, linked issues, adjacent
    comments.
-6. Write the verdict JSON (schema in scripts/verdict.py) and validate it.
-   If the commit you are citing came from your own reading of history
-   rather than from `introduction_candidates` or `blame_candidates`, add
-   `subject`, `date`, `author` (and `author_email` if you have it) to that
-   evidence item alongside `type` and `ref`; that is what lets `render.py`
-   and `artifacts.py` render it as the answer instead of reporting it as an
-   unresolved citation.
-7. Render and hand over:
+6. If step 5 (or your own reading of a short history, per the section
+   above) points at a commit that is not already in `introduction_candidates`
+   or `blame_candidates`, re-run the tracer once more with
+   `--include-commit <sha>` (repeatable for more than one) before you write
+   the verdict, so it gets verified against the repository and added with
+   `why: "cited"`. Do not skip this and cite a remembered sha directly: the
+   tracer confirms the sha exists and reads its real subject/date/author
+   from git, which is the whole reason a citation is trustworthy at all.
+7. Write the verdict JSON (schema in scripts/verdict.py) and validate it.
+8. Render and hand over:
 
    ```
    python3 <skill>/scripts/render.py --trace t.json --verdict v.json
