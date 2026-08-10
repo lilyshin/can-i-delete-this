@@ -29,19 +29,31 @@ by the size check, which then skipped the tracer and produced no report.
   can defeat blame's own move detection, past what pickaxe's
   current-content needles recover), used to resolve exactly like a stale
   or mistyped citation, an "unresolved" attribution that neither the HTML
-  report nor the paste-ready artifact would name. `citation.py` now
-  accepts a `commit` evidence item's own `subject`/`date`/`author` fields
-  as a fallback candidate when the cited sha is in neither
-  `introduction_candidates` nor `blame_candidates`, and `render.py`/
-  `artifacts.py` render it as the real introduction the same way. No
-  schema change: `verdict.py` already accepted extra keys on an evidence
-  item; this only teaches the two consumers to look for them.
+  report nor the paste-ready artifact would name. Fixed in `trace.py`, not
+  `citation.py`: a new `--include-commit <sha>` option (repeatable;
+  `include_commits` in `trace()`) looks the sha up against the repository
+  with `gitq.commit_meta`, refuses a nonexistent or mistyped sha into
+  `notes` instead of silently accepting it, and adds a verified sha to
+  `introduction_candidates` with `why: "cited"` and its real subject, date
+  and author read from git, bypassing noise exclusion and the candidate
+  cap the same way blame's own results already do. `citation.py` still
+  only ever matches `introduction_candidates` and `blame_candidates`; it
+  never reads descriptive fields off a verdict's own evidence, because
+  those come from the agent, not from git, and this project's facts come
+  from git only. (An earlier draft of this fix did read those fields
+  directly in `citation.py`, and a review caught that it rendered a
+  fabricated subject on a nonexistent sha as a verified "real
+  introduction" indistinguishable from one the tracer had actually
+  checked; that version never shipped, but see
+  `TestFabricatedCitationIsRejected` in `tests/test_citation_resolution.py`
+  for the exact scenario, pinned as a permanent regression test.)
 - Added `build_two_renames` to `tests/fixtures/make_fixture_repo.py`, and
   `TestTwoRenames` in `tests/test_trace_cases.py`, pinning that a file
   renamed twice still resolves to its real introducing commit through the
   tracer and that its `--follow` history count exceeds its no-follow
-  count. Added `TestHistoryReadCitation` in `tests/test_citation_resolution.py`
-  for the citation-gap fix above.
+  count. Added `TestExplicitlyIncludedCommit` and
+  `TestFabricatedCitationIsRejected` in `tests/test_citation_resolution.py`
+  for the `--include-commit` fix above.
 
 ## 0.2.0 - 2026-08-06
 
