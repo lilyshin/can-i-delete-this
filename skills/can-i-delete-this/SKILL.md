@@ -86,7 +86,14 @@ history size.
 4. **Never write to the user's files.** No comment injection, no PR creation.
    Produce text; the user decides.
 5. **Respond in the user's language.** This file is English; your output
-   follows the user.
+   follows the user, and that includes the two deliverables render.py and
+   artifacts.py produce, not only your own prose. Pass `--lang` to both
+   (see step 8): `--lang ko` for a Korean user, and so on. The default is
+   English (`en`); an unsupported value falls back to English rather than
+   erroring. `render.py`/`artifacts.py` only translate their own chrome
+   (badge labels, card headers, the dot legend, the artifact wording); the
+   data inside it, shas, paths, commit subjects, author names, dates, is
+   never translated and always comes from git, regardless of `--lang`.
 6. **Name the target you answered about.** Quote `target` from the tracer's
    output back to the user: path, and the line range. We watched an agent
    answer confidently about a different line than the one it was asked
@@ -127,11 +134,12 @@ history size.
    tracer confirms the sha exists and reads its real subject/date/author
    from git, which is the whole reason a citation is trustworthy at all.
 7. Write the verdict JSON (schema in scripts/verdict.py) and validate it.
-8. Render and hand over:
+8. Render and hand over, passing `--lang` to match the language you are
+   answering in (default `en`; omit it for an English-speaking user):
 
    ```
-   python3 <skill>/scripts/render.py --trace t.json --verdict v.json
-   python3 <skill>/scripts/artifacts.py --trace t.json --verdict v.json --copy
+   python3 <skill>/scripts/render.py --trace t.json --verdict v.json --lang ko
+   python3 <skill>/scripts/artifacts.py --trace t.json --verdict v.json --copy --lang ko
    ```
 
 ## Grading

@@ -190,11 +190,14 @@ an evidence item, since those came from the agent, not from git. Only once
 the re-run confirms the commit does the citation belong in the verdict.
 
 Write the verdict object (schema enforced by `scripts/verdict.py`), run it
-through `validate()`, then:
+through `validate()`, then render and hand over, passing `--lang` to match
+the language you are answering in (default `en`; SKILL.md's rule 5 covers
+why this matters: the report and artifact are deliverables, not just your
+own prose):
 
 ```
-python3 render.py --trace t.json --verdict v.json
-python3 artifacts.py --trace t.json --verdict v.json --copy
+python3 render.py --trace t.json --verdict v.json --lang ko
+python3 artifacts.py --trace t.json --verdict v.json --copy --lang ko
 ```
 
 If `limits.truncated` or `limits.candidate_cap_reached` is true anywhere in
