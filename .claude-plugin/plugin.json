@@ -1,6 +1,6 @@
 {
   "name": "can-i-delete-this",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Answers \"can I delete this code?\" from git history. Traces past formatter commits, renames and squashes to the real introducing commit, then grades deletion risk with commit-level evidence.",
   "author": { "name": "lilyshin" },
   "homepage": "https://github.com/lilyshin/can-i-delete-this",

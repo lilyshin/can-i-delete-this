@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.2.2 - 2026-08-11
+
+Field report from the owner running the published skill for a Korean user:
+`summary`, `conditions` and the artifact prose came back in Korean as
+instructed by SKILL.md rule 5, but `render.py` and `artifacts.py` hardcoded
+their own English chrome around it, so the report the user actually opened
+was Korean analysis wrapped in English badge labels, card headers, tag
+text and artifact scaffolding.
+
+- Added `--lang` to both `render.py` and `artifacts.py` (default `en`;
+  threaded through `render()`, `write_report()`, `skeleton()` and the
+  functions they call as an `en`-defaulting keyword argument), with `en`
+  and `ko` supported. Every string a user reads that these two scripts
+  write themselves, not data read from git or the verdict, is now looked
+  up in a plain module-level `_STRINGS` dict keyed by language then by a
+  dotted string key: grade badge labels, card headers, the dot legend, the
+  co-changed line's label, both truncation disclosures, the candidate-cap
+  note, the collapsed `<summary>` text (count still correct and escaped),
+  the artifact skeletons for all four grades, the unresolved-citation
+  message, the `Grade:`/`Target:` labels, and the placeholder words
+  substituted when a field is missing (`unknown`, `date unknown`, and so
+  on). SHAs, paths, commit subjects, author names and dates are never
+  looked up in this table; they stay exactly what git or the verdict said.
+  An unknown `--lang` value falls back to `en` rather than raising. No new
+  dependency: no gettext, stdlib only.
+- The page's `<html lang="...">` attribute now matches the language
+  `render.py` actually rendered.
+- Shortened the dot legend from one 748-character paragraph (761 with its
+  one `<code>` tag) to four short phrases, one per state, in both
+  languages (145 characters of English phrase text, 84 of Korean). The two
+  nuances the long paragraph carried moved rather than disappeared: a
+  filled dot that is also a noise-flagged squash already carries a second
+  "also flagged noise" tag on that same row (`render.py`'s `_real_row`),
+  so the legend no longer repeats it; the reasoning for why a revert chain
+  survives regardless of noise scoring already lives in
+  `strategy-tree.md`'s step 5, so the legend states the fact (part of a
+  revert/reapply chain) without re-deriving the reason.
+- `SKILL.md` rule 5 ("Respond in the user's language") now says plainly
+  that this covers the report and the artifact, not only the agent's own
+  prose, and the workflow's render/artifacts invocation in both
+  `SKILL.md` and `strategy-tree.md` passes `--lang` to match.
+- Added `tests/test_localization.py`: `--lang ko` renders Korean chrome
+  around untouched data, default and explicit `en` are byte-identical, an
+  unknown lang value falls back to `en` without raising, the collapsed
+  `<summary>` count is correct and escaped in both languages, a combined
+  injection payload stays escaped in a `ko` render, and the `lang`
+  attribute matches. All 183 pre-existing tests still pass unmodified,
+  proven by diffing this release's default-`en` output against the
+  previous release's for the same fixtures before writing a single new
+  string.
+
 ## 0.2.1 - 2026-08-07
 
 Field-report fix: a real trace on a file with two renames was miscounted
