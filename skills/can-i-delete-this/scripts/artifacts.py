@@ -2,6 +2,13 @@
 
 The skill never writes to the user's files. It produces text and, when
 asked, puts it on the clipboard.
+
+Every piece of chrome this module writes around the trace/verdict data
+(the "// KEEP:", the checklist wording, the "Grade:"/"Target:" labels, the
+unresolved-citation message, and the placeholder words used when a field
+is missing) is looked up in `_STRINGS` by `lang`; see that dict's
+docstring. SHAs, paths, commit subjects, author names and dates are always
+data read from the trace or the verdict, never translated.
 """
 
 import argparse
@@ -22,6 +29,138 @@ CLIPBOARD_TOOLS = (
 
 # Directory names that mark everything under them as test code.
 _TEST_DIR_NAMES = {"tests", "test", "spec", "specs", "__tests__"}
+
+# Every piece of text this module writes around the data it renders, keyed
+# by language then by a dotted string key. This is a plain data lookup, not
+# gettext: adding a third language means adding a third top-level key with
+# every key of `en` translated, not touching any function below. `en` is
+# the default and the fallback target (see `_resolve_lang`), so its text
+# must stay exactly what shipped before this table existed -- the existing
+# test suite calls `skeleton()` with no `lang` argument and pins the exact
+# text that produces.
+#
+# `common.*` holds the placeholder words substituted when a field trace.py
+# could not resolve is missing (a missing sha, subject, date, author or
+# email); those words are written by this module, not read from git, so
+# they are chrome like everything else here, not data.
+_STRINGS = {
+    "en": {
+        "label.grade": "Grade",
+        "label.target": "Target",
+        "unresolved.cited": "The verdict cites commit {cited} as evidence, but no "
+            "commit with that prefix was found in this trace (checked "
+            "introduction_candidates and blame_candidates).",
+        "unresolved.warning": "This attribution could not be verified. Do not treat "
+            "this grade as confirmed; re-run the trace or check the citation by "
+            "hand before acting on it.",
+
+        "danger.keep": "// KEEP: {subject} ({day}, {sha})",
+        "danger.guard": "// Before deleting, confirm {guard} still passes.",
+        "danger.warning": "// WARNING: no test guards this. Add one before touching it.",
+
+        "conditional.title": "Deletion checklist for {path}:{start}",
+        "conditional.condition": "- [ ] Confirm the condition that made this "
+            "necessary no longer holds",
+        "conditional.introduced": "- [ ] Introduced in {sha} ({subject})",
+        "conditional.run_guard": "- [ ] Run {guard}",
+        "conditional.add_test": "- [ ] Add a regression test first",
+        "conditional.signoff": "- [ ] Get sign-off from someone who knows this area",
+
+        "safe.title": "Remove dead guard in {path}",
+        "safe.added": "This code was added in {sha} ({subject}).",
+        "safe.rationale": "The reason it existed no longer applies, so it is "
+            "safe to remove.",
+        "safe.evidence_header": "Evidence:",
+        "safe.introducing_commit": "- introducing commit: {sha}",
+        "safe.guarded_by": "- guarded by: {guard}",
+        "safe.no_test": "- no test depends on it",
+
+        "unknown.title": "Question about {path}:{start}",
+        "unknown.body": "This looks intentional but I cannot find why it was added.",
+        "unknown.closest": "Closest commit: {sha} ({subject}, {day})",
+        "unknown.author": "Author: {who} <{mail}>",
+        "unknown.notes_header": "Investigation notes:",
+        "unknown.limited": "Search was limited: {scope}.",
+        "unknown.scope_truncated": "history search was truncated",
+        "unknown.scope_cap": "candidate cap was reached",
+        "unknown.closing": "Does anyone remember whether this is still needed?",
+
+        "common.unknown": "unknown",
+        "common.reason_unknown": "reason unknown",
+        "common.no_subject": "no subject",
+        "common.date_unknown": "date unknown",
+    },
+    "ko": {
+        "label.grade": "등급",
+        "label.target": "대상",
+        "unresolved.cited": "검증(verdict)이 커밋 {cited}을 근거로 인용했지만, 이 "
+            "trace의 introduction_candidates와 blame_candidates 어디에도 해당 "
+            "prefix를 가진 커밋이 없습니다.",
+        "unresolved.warning": "이 귀속(attribution)은 검증되지 않았습니다. 이 등급을 "
+            "확정된 것으로 보지 말고, trace를 다시 돌리거나 인용을 직접 확인한 뒤 "
+            "판단하세요.",
+
+        "danger.keep": "// 유지: {subject} ({day}, {sha})",
+        "danger.guard": "// 삭제하기 전에 {guard}가 통과하는지 확인하세요.",
+        "danger.warning": "// 주의: 이 코드를 지켜주는 테스트가 없습니다. 손대기 전에 "
+            "테스트를 추가하세요.",
+
+        "conditional.title": "{path}:{start} 삭제 체크리스트:",
+        "conditional.condition": "- [ ] 이 코드가 필요했던 조건이 더 이상 유효하지 "
+            "않은지 확인",
+        "conditional.introduced": "- [ ] 도입 커밋: {sha} ({subject})",
+        "conditional.run_guard": "- [ ] {guard} 실행해서 확인",
+        "conditional.add_test": "- [ ] 회귀 테스트를 먼저 추가",
+        "conditional.signoff": "- [ ] 이 영역을 잘 아는 사람에게 확인받기",
+
+        "safe.title": "{path}의 불필요한 가드 제거",
+        "safe.added": "이 코드는 {sha} ({subject})에서 추가되었습니다.",
+        "safe.rationale": "이 코드가 필요했던 이유가 더 이상 유효하지 않아 제거해도 "
+            "안전합니다.",
+        "safe.evidence_header": "근거:",
+        "safe.introducing_commit": "- 도입 커밋: {sha}",
+        "safe.guarded_by": "- 관련 테스트: {guard}",
+        "safe.no_test": "- 이 코드에 의존하는 테스트 없음",
+
+        "unknown.title": "{path}:{start} 관련 질문",
+        "unknown.body": "의도적으로 작성된 것 같은데, 왜 추가됐는지 찾지 못했습니다.",
+        "unknown.closest": "가장 가까운 커밋: {sha} ({subject}, {day})",
+        "unknown.author": "작성자: {who} <{mail}>",
+        "unknown.notes_header": "조사 노트:",
+        "unknown.limited": "조사 범위가 제한되었습니다: {scope}.",
+        "unknown.scope_truncated": "히스토리 탐색이 중간에 끊김",
+        "unknown.scope_cap": "후보 개수 상한에 도달함",
+        "unknown.closing": "이거 아직 필요한지 아시는 분 있나요?",
+
+        "common.unknown": "알 수 없음",
+        "common.reason_unknown": "이유 불명",
+        "common.no_subject": "제목 없음",
+        "common.date_unknown": "날짜 알 수 없음",
+    },
+}
+
+
+def _resolve_lang(lang):
+    """An unknown lang value falls back to English rather than erroring.
+
+    A wrong language is a worse failure than an untranslated one only if
+    it crashes, so this never raises: anything not in `_STRINGS` becomes
+    `"en"`.
+    """
+    return lang if lang in _STRINGS else "en"
+
+
+def _t(lang, key, **kwargs):
+    """Look up `key` for `lang` (falling back to English), then format it.
+
+    A key missing from a supported language's table falls back to the
+    English text for that key rather than raising, so a partially
+    translated future language degrades to English phrase by phrase
+    instead of crashing.
+    """
+    lang = _resolve_lang(lang)
+    template = _STRINGS[lang].get(key, _STRINGS["en"].get(key, key))
+    return template.format(**kwargs) if kwargs else template
 
 
 def _top(trace_data, refs):
@@ -65,7 +204,7 @@ def _top(trace_data, refs):
     return {}, "empty"
 
 
-def _unresolved_citation_text(grade, target, refs):
+def _unresolved_citation_text(grade, target, refs, *, lang="en"):
     """Artifact text for a citation that names no commit in this trace.
 
     Keeps the artifact useful even though the attribution is unresolved:
@@ -74,19 +213,16 @@ def _unresolved_citation_text(grade, target, refs):
     rather than be handed a confident guess (see _top's "unresolved"
     branch for why guessing is exactly the bug this avoids).
     """
-    path = target.get("path", "unknown")
-    start = target.get("start", "unknown")
-    cited = ", ".join(refs) if refs else "unknown"
+    unknown = _t(lang, "common.unknown")
+    path = target.get("path", unknown)
+    start = target.get("start", unknown)
+    cited = ", ".join(refs) if refs else unknown
     return "\n".join([
-        "Grade: {}".format(grade),
-        "Target: {}:{}".format(path, start),
+        "{}: {}".format(_t(lang, "label.grade"), grade),
+        "{}: {}:{}".format(_t(lang, "label.target"), path, start),
         "",
-        "The verdict cites commit {} as evidence, but no commit with that "
-        "prefix was found in this trace (checked introduction_candidates "
-        "and blame_candidates).".format(cited),
-        "This attribution could not be verified. Do not treat this grade "
-        "as confirmed; re-run the trace or check the citation by hand "
-        "before acting on it.",
+        _t(lang, "unresolved.cited", cited=cited),
+        _t(lang, "unresolved.warning"),
     ])
 
 
@@ -138,7 +274,7 @@ def _tests(trace_data, real_sha=None):
             and c.get("sha") == real_sha]
 
 
-def skeleton(grade, trace_data, evidence=None):
+def skeleton(grade, trace_data, evidence=None, *, lang="en"):
     """Return a fill-in-the-blank artifact for the agent to complete.
 
     `evidence` is the verdict's own `evidence` list (commit/pr/issue/test
@@ -146,13 +282,17 @@ def skeleton(grade, trace_data, evidence=None):
     actually cites over the chronologically-oldest one; see `_top`'s
     docstring. It is optional and defaults to None so existing callers that
     have not been updated keep the previous (oldest-candidate) behavior.
+
+    `lang` selects the language of the chrome this function writes around
+    the trace/verdict data (see the module docstring and `_STRINGS`);
+    it defaults to `"en"` so existing callers keep the previous text.
     """
     target = trace_data.get("target", {})
     refs = citation.commit_refs(evidence)
     top, status = _top(trace_data, refs)
 
     if status == "unresolved":
-        return _unresolved_citation_text(grade, target, refs)
+        return _unresolved_citation_text(grade, target, refs, lang=lang)
 
     # Every field below is checked with isinstance() before use, not coerced
     # with str(). str(x) turns a missing/None date into "" or "None" and lets
@@ -161,60 +301,66 @@ def skeleton(grade, trace_data, evidence=None):
     # happening when introduction_candidates is empty, as it is for F4-style
     # squash cases (see tests/test_trace_cases.py::test_reports_why_it_came_up_empty).
     raw_sha = top.get("sha")
-    sha = raw_sha[:7] if isinstance(raw_sha, str) and raw_sha else "unknown"
+    sha = raw_sha[:7] if isinstance(raw_sha, str) and raw_sha else _t(lang, "common.unknown")
 
     raw_subject = top.get("subject")
     subject = raw_subject if isinstance(raw_subject, str) and raw_subject else ""
 
     raw_date = top.get("date")
-    day = raw_date[:10] if isinstance(raw_date, str) and raw_date else "date unknown"
+    day = raw_date[:10] if isinstance(raw_date, str) and raw_date else _t(lang, "common.date_unknown")
 
     tests = _tests(trace_data, raw_sha if isinstance(raw_sha, str) and raw_sha else None)
     guard = tests[0] if tests else None
 
     if grade == "danger":
-        lines = ["// KEEP: {} ({}, {})".format(subject or "reason unknown", day, sha)]
+        lines = [_t(lang, "danger.keep",
+                    subject=subject or _t(lang, "common.reason_unknown"),
+                    day=day, sha=sha)]
         if guard:
-            lines.append("// Before deleting, confirm {} still passes.".format(guard))
+            lines.append(_t(lang, "danger.guard", guard=guard))
         else:
-            lines.append("// WARNING: no test guards this. Add one before touching it.")
+            lines.append(_t(lang, "danger.warning"))
         return "\n".join(lines)
 
     if grade == "conditional":
-        guard_line = "- [ ] Run {}".format(guard) if guard else "- [ ] Add a regression test first"
+        guard_line = _t(lang, "conditional.run_guard", guard=guard) if guard \
+            else _t(lang, "conditional.add_test")
         return "\n".join([
-            "Deletion checklist for {}:{}".format(target.get("path"), target.get("start")),
-            "- [ ] Confirm the condition that made this necessary no longer holds",
-            "- [ ] Introduced in {} ({})".format(sha, subject or "unknown"),
+            _t(lang, "conditional.title", path=target.get("path"), start=target.get("start")),
+            _t(lang, "conditional.condition"),
+            _t(lang, "conditional.introduced", sha=sha,
+               subject=subject or _t(lang, "common.unknown")),
             guard_line,
-            "- [ ] Get sign-off from someone who knows this area",
+            _t(lang, "conditional.signoff"),
         ])
 
     if grade == "safe":
-        guard_line = "- guarded by: {}".format(guard) if guard else "- no test depends on it"
+        guard_line = _t(lang, "safe.guarded_by", guard=guard) if guard \
+            else _t(lang, "safe.no_test")
         return "\n".join([
-            "Remove dead guard in {}".format(target.get("path")),
+            _t(lang, "safe.title", path=target.get("path")),
             "",
-            "This code was added in {} ({}).".format(sha, subject or "unknown"),
-            "The reason it existed no longer applies, so it is safe to remove.",
+            _t(lang, "safe.added", sha=sha, subject=subject or _t(lang, "common.unknown")),
+            _t(lang, "safe.rationale"),
             "",
-            "Evidence:",
-            "- introducing commit: {}".format(sha),
+            _t(lang, "safe.evidence_header"),
+            _t(lang, "safe.introducing_commit", sha=sha),
             guard_line,
         ])
 
     if grade == "unknown":
         raw_author = top.get("author")
-        who = raw_author if isinstance(raw_author, str) and raw_author else "unknown"
+        who = raw_author if isinstance(raw_author, str) and raw_author else _t(lang, "common.unknown")
         raw_mail = top.get("author_email")
-        mail = raw_mail if isinstance(raw_mail, str) and raw_mail else "unknown"
+        mail = raw_mail if isinstance(raw_mail, str) and raw_mail else _t(lang, "common.unknown")
 
         lines = [
-            "Question about {}:{}".format(target.get("path"), target.get("start")),
+            _t(lang, "unknown.title", path=target.get("path"), start=target.get("start")),
             "",
-            "This looks intentional but I cannot find why it was added.",
-            "Closest commit: {} ({}, {})".format(sha, subject or "no subject", day),
-            "Author: {} <{}>".format(who, mail),
+            _t(lang, "unknown.body"),
+            _t(lang, "unknown.closest", sha=sha,
+               subject=subject or _t(lang, "common.no_subject"), day=day),
+            _t(lang, "unknown.author", who=who, mail=mail),
         ]
 
         # unknown means the investigation found nothing conclusive; notes is
@@ -226,22 +372,22 @@ def skeleton(grade, trace_data, evidence=None):
             if isinstance(raw_notes, list) else []
         if note_lines:
             lines.append("")
-            lines.append("Investigation notes:")
+            lines.append(_t(lang, "unknown.notes_header"))
             lines.extend("- {}".format(n) for n in note_lines)
 
         limits = trace_data.get("limits")
         if isinstance(limits, dict):
             scope_flags = []
             if limits.get("truncated"):
-                scope_flags.append("history search was truncated")
+                scope_flags.append(_t(lang, "unknown.scope_truncated"))
             if limits.get("candidate_cap_reached"):
-                scope_flags.append("candidate cap was reached")
+                scope_flags.append(_t(lang, "unknown.scope_cap"))
             if scope_flags:
                 lines.append("")
-                lines.append("Search was limited: {}.".format("; ".join(scope_flags)))
+                lines.append(_t(lang, "unknown.limited", scope="; ".join(scope_flags)))
 
         lines.append("")
-        lines.append("Does anyone remember whether this is still needed?")
+        lines.append(_t(lang, "unknown.closing"))
         return "\n".join(lines)
 
     raise ValueError("unsupported grade: {!r}".format(grade))
@@ -268,13 +414,17 @@ def main():
     ap.add_argument("--trace", required=True)
     ap.add_argument("--verdict", required=True)
     ap.add_argument("--copy", action="store_true")
+    ap.add_argument("--lang", default="en", help="language for the artifact's own "
+                    "wording (en, ko; unknown values fall back to en). Data read "
+                    "from git or the verdict -- shas, paths, subjects, authors, "
+                    "dates -- is never translated.")
     args = ap.parse_args()
     with open(args.trace, encoding="utf-8") as fh:
         t = json.load(fh)
     with open(args.verdict, encoding="utf-8") as fh:
         v = json.load(fh)
     content = v.get("artifact", {}).get("content") or skeleton(
-        v.get("grade", "unknown"), t, v.get("evidence"))
+        v.get("grade", "unknown"), t, v.get("evidence"), lang=args.lang)
     print(content)
     if args.copy:
         tool = to_clipboard(content)
