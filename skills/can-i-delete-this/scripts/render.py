@@ -169,6 +169,16 @@ _STRINGS = {
         "activity.top_authors": "Main authors: {names}",
 
         "card.repro": "Reproduce this",
+
+        "card.lifecycle": "Why it existed",
+        "role.introduced": "Introduced",
+        "role.superseded": "Superseded",
+
+        "card.isolation": "Current isolation",
+        "isolation.guard_label": "guard{plural}",
+        "isolation.reference_label": "mention{plural}",
+
+        "card.risk": "Residual risk",
     },
     "ko": {
         "badge.danger": "삭제 금지",
@@ -232,6 +242,16 @@ _STRINGS = {
         "activity.top_authors": "주요 작성자: {names}",
 
         "card.repro": "재현 명령어",
+
+        "card.lifecycle": "존재했던 이유",
+        "role.introduced": "도입",
+        "role.superseded": "대체됨",
+
+        "card.isolation": "현재 고립도",
+        "isolation.guard_label": "가드",
+        "isolation.reference_label": "언급",
+
+        "card.risk": "잔존 위험",
     },
 }
 
@@ -405,6 +425,33 @@ ul.checklist li::before { content:"☐"; position:absolute; left:0; top:0;
 .warn { color:var(--warn-fg); background:var(--warn-bg); border-radius:8px;
         padding:.6rem .85rem; margin:.7rem 0 0; font-size:.9rem; }
 .warn:first-child { margin-top:0; }
+/* .risk reuses the exact --warn-fg/--warn-bg pair .warn already uses above,
+   not a new colour, per the design note that the warning treatment already
+   exists in this stylesheet. It renders as its own card (not a plain .warn
+   paragraph) because a risk block carries a header plus a list of hazards,
+   not one sentence, and it must sit near the verdict, not at the bottom, so
+   a `safe` grade with a residual risk cannot be read as risk-free. */
+.risk { background:var(--warn-bg); color:var(--warn-fg); border-radius:12px;
+        padding:1rem 1.2rem; margin:0 0 1.25rem; }
+.risk > strong { display:block; font-size:.75rem; text-transform:uppercase;
+                 letter-spacing:.06em; margin-bottom:.5rem; color:var(--warn-fg); }
+.risk ul { margin:.2rem 0 0; padding-left:1.2rem; color:var(--warn-fg); }
+.risk li { margin:.25rem 0; }
+/* The lifetime arc: a short chain of steps (introduced, then superseded)
+   joined by an arrow, compact rather than a paragraph, since the arc's
+   whole point is that a reader sees the shape of the argument at a glance. */
+.arc { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-top:.5rem; }
+.arc-step { display:inline-flex; align-items:baseline; gap:.4rem; }
+.arc-arrow { color:var(--muted); font-weight:700; }
+.tag.role { background:var(--code); color:var(--muted); border:1px solid var(--line); }
+/* Isolation figures render as small stat tiles, not prose, so a zero count
+   is a number a reader sees immediately rather than a fact buried in a
+   sentence. */
+.stats { display:flex; gap:1.75rem; margin-top:.5rem; }
+.stat { display:flex; flex-direction:column; }
+.stat-num { font-size:1.5rem; font-weight:800; color:var(--fg); line-height:1.1; }
+.stat-label { font-size:.72rem; color:var(--muted); text-transform:uppercase;
+              letter-spacing:.05em; margin-top:.2rem; }
 .hint { color:var(--muted); font-size:.85rem; margin:.4rem 0 0; }
 code { background:var(--code); border-radius:4px; padding:.05rem .3rem;
        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -820,6 +867,128 @@ def _repro_html(trace_data, verdict_data, lang):
     )
 
 
+def _arc_html(evidence_items, lang):
+    """The reason's lifetime: what the code was introduced for, and, when
+    the verdict says so, what retired that reason. Reads only evidence
+    items tagged `role: "introduced"` or `role: "superseded"`
+    (verdict.py's `EVIDENCE_ROLES`); every other evidence item, tagged with
+    a different role or with none at all, still only ever renders in the
+    plain Evidence list further down the page. Neither role present (every
+    verdict written before roles existed, or one with no lifecycle story
+    to tell) renders nothing here at all -- this block is the argument for
+    a grade, not a fact about the code, so it must not appear when nobody
+    made that argument.
+
+    Order follows the evidence list as written, not a fixed
+    introduced-then-superseded order, so an agent that lists more than one
+    step of either kind (rare, but not forbidden by the schema) still
+    reads left to right the way it was written.
+    """
+    steps = [e for e in evidence_items if e.get("role") in ("introduced", "superseded")]
+    if not steps:
+        return ""
+    parts = []
+    for e in steps:
+        role_label = _e(_t(lang, "role." + str(e.get("role"))))
+        ref = _e(e.get("ref", ""))
+        note = e.get("note")
+        note_html = " {}".format(_e(note)) if note else ""
+        parts.append(
+            '<span class="arc-step"><span class="tag role">{role}</span> '
+            '<code>{ref}</code>{note}</span>'.format(role=role_label, ref=ref, note=note_html)
+        )
+    arrow = '<span class="arc-arrow">&#8594;</span>'
+    return (
+        '<div class="section arc-section"><strong>{header}</strong>'
+        '<div class="arc">{steps}</div></div>'
+    ).format(header=_e(_t(lang, "card.lifecycle")), steps=arrow.join(parts))
+
+
+def _role_tally(evidence_items, role):
+    """(total, present) for every evidence item tagged with `role`.
+
+    `present` is item existence: at least one evidence item carries this
+    role at all, regardless of what it counts to. `total` is what to
+    display: each matching item contributes its own `count` field when
+    that field is an int (an agent that searched and confirmed zero
+    guarding tests can write that as one evidence item, `role: "guard",
+    "count": 0`, rather than needing zero items to say so), or 1 when the
+    item carries no such field (the common case: one evidence item is one
+    guard, or one reference, and nothing more needs saying). The two are
+    returned separately because `present` decides whether the isolation
+    block renders at all, while `total` decides what number appears in it
+    -- an explicit zero must still render as a rendered block, not as the
+    same "nobody checked" absence a `present=False` role produces.
+    """
+    total = 0
+    present = False
+    for e in evidence_items:
+        if e.get("role") != role:
+            continue
+        present = True
+        count = e.get("count")
+        total += count if isinstance(count, int) and not isinstance(count, bool) else 1
+    return total, present
+
+
+def _isolation_html(evidence_items, lang):
+    """Isolation figures: how many `guard`-role and `reference`-role
+    evidence items the verdict carries, as two small numbers rather than a
+    sentence a reader has to parse for them. Renders only when at least
+    one of the two roles is actually present anywhere in the evidence --
+    "nobody checked" and "checked, found none" are different facts, and an
+    isolation block with no role-tagged evidence behind it would render
+    the first as if it were the second. Once either role is present,
+    though, the other side's count of zero is exactly the fact that
+    matters (a `safe` verdict resting in part on "no test guards this")
+    and renders as 0, not as an omitted figure.
+    """
+    guard_count, guard_present = _role_tally(evidence_items, "guard")
+    reference_count, reference_present = _role_tally(evidence_items, "reference")
+    if not guard_present and not reference_present:
+        return ""
+    return (
+        '<div class="section"><strong>{header}</strong>'
+        '<div class="stats">'
+        '<div class="stat"><span class="stat-num">{guard_count}</span>'
+        '<span class="stat-label">{guard_label}</span></div>'
+        '<div class="stat"><span class="stat-num">{reference_count}</span>'
+        '<span class="stat-label">{reference_label}</span></div>'
+        '</div></div>'
+    ).format(
+        header=_e(_t(lang, "card.isolation")),
+        guard_count=guard_count,
+        reference_count=reference_count,
+        guard_label=_e(_t(lang, "isolation.guard_label",
+                           plural="" if guard_count == 1 else "s")),
+        reference_label=_e(_t(lang, "isolation.reference_label",
+                               plural="" if reference_count == 1 else "s")),
+    )
+
+
+def _risk_html(evidence_items, lang):
+    """Residual-risk evidence (`role: "risk"`) gets its own block, placed
+    near the verdict rather than at the bottom of the page, using the same
+    `--warn-fg`/`--warn-bg` pair the truncation and candidate-cap
+    disclosures already use (see `.warn` in `_CSS`) rather than inventing a
+    new colour. A `safe` verdict that still carries a risk is exactly the
+    case this exists for: the hazard must not be easier to miss than the
+    grade badge above it.
+    """
+    items = [e for e in evidence_items if e.get("role") == "risk"]
+    if not items:
+        return ""
+    lis = "".join(
+        "<li><code>{ref}</code>{note}</li>".format(
+            ref=_e(e.get("ref", "")),
+            note=" {}".format(_e(e.get("note"))) if e.get("note") else "",
+        )
+        for e in items
+    )
+    return '<div class="risk"><strong>{header}</strong><ul>{items}</ul></div>'.format(
+        header=_e(_t(lang, "card.risk")), items=lis)
+
+
 def render(trace_data, verdict_data, *, lang="en"):
     lang = _resolve_lang(lang)
     grade = verdict_data.get("grade", "unknown")
@@ -844,6 +1013,15 @@ def render(trace_data, verdict_data, *, lang="en"):
     label = _t(lang, badge_key)
     target = trace_data.get("target", {})
     limits = trace_data.get("limits", {})
+    evidence_items = verdict_data.get("evidence") or []
+
+    # Three role-driven blocks, all optional, all near the verdict rather
+    # than buried lower on the page or in prose (see _arc_html/_isolation_
+    # html/_risk_html's own docstrings for why each one renders, or does
+    # not, the way it does).
+    arc_block = _arc_html(evidence_items, lang)
+    risk_block = _risk_html(evidence_items, lang)
+    isolation_block = _isolation_html(evidence_items, lang)
 
     # Which shas the verdict actually cites as the real introduction. This,
     # not list position and not "found via blame", is what decides the bold
@@ -956,7 +1134,6 @@ def render(trace_data, verdict_data, *, lang="en"):
         co_changed_html = '<p class="hint">{}</p>'.format(
             _t(lang, "hint.co_changed", paths=co_changed_paths))
 
-    evidence_items = verdict_data.get("evidence", [])
     evidence = "".join(
         "<li><code>{type}</code> <code>{ref}</code>{note}</li>".format(
             type=_e(e.get("type", "")),
@@ -1030,6 +1207,9 @@ def render(trace_data, verdict_data, *, lang="en"):
         "<div class=\"badge\">{label}</div>\n"
         "<p class=\"sub\">{summary}</p>\n"
         "</div>\n"
+        "{arc_block}"
+        "{risk_block}"
+        "{isolation_block}"
         "{snippet_block}\n"
         "{conditions_block}\n"
         "<div class=\"section\"><strong>{evidence_header}</strong><ul>{evidence}</ul></div>\n"
@@ -1064,6 +1244,9 @@ def render(trace_data, verdict_data, *, lang="en"):
         summary=_e(verdict_data.get("summary", "")),
         root_style=root_style,
         label=_e(label),
+        arc_block=arc_block,
+        risk_block=risk_block,
+        isolation_block=isolation_block,
         snippet_block=_snippet_html(trace_data, lang),
         evidence_header=_e(_t(lang, "card.evidence")),
         copy_label=_e(_t(lang, "button.copy")),

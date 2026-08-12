@@ -142,6 +142,51 @@ class TestValidate(unittest.TestCase):
                 artifact={"kind": None, "content": "test"}
             ))
 
+    def test_evidence_role_is_optional(self):
+        """An evidence item with no role key validates exactly as before."""
+        verdict.validate(ok_verdict(evidence=[
+            {"type": "commit", "ref": "a3f8c21", "note": "no role here"},
+            {"type": "test", "ref": "payment_test.py:88", "note": "covers this branch"},
+        ]))
+
+    def test_evidence_accepts_every_known_role(self):
+        for role in verdict.EVIDENCE_ROLES:
+            with self.subTest(role=role):
+                verdict.validate(ok_verdict(evidence=[
+                    {"type": "commit", "ref": "a3f8c21", "note": "x"},
+                    {"type": "commit", "ref": "b91c440", "role": role, "note": "y"},
+                ]))
+
+    def test_evidence_rejects_unknown_role(self):
+        with self.assertRaises(verdict.VerdictError):
+            verdict.validate(ok_verdict(evidence=[
+                {"type": "commit", "ref": "a3f8c21", "role": "introducd", "note": "typo"},
+            ]))
+
+    def test_evidence_rejects_non_string_role(self):
+        with self.assertRaises(verdict.VerdictError):
+            verdict.validate(ok_verdict(evidence=[
+                {"type": "commit", "ref": "a3f8c21", "role": 42, "note": "x"},
+            ]))
+
+    def test_branch_evidence_type_validates(self):
+        """`branch` is a legitimate evidence type: an unmerged branch that
+        still calls the code under investigation.
+        """
+        verdict.validate(ok_verdict(evidence=[
+            {"type": "commit", "ref": "a3f8c21", "note": "introducing commit"},
+            {"type": "branch", "ref": "feature/still-calls-it",
+             "role": "risk", "note": "will fail to compile if merged forward"},
+        ]))
+
+    def test_existing_evidence_types_still_validate(self):
+        for etype in ("commit", "pr", "issue", "test"):
+            with self.subTest(type=etype):
+                verdict.validate(ok_verdict(evidence=[
+                    {"type": "commit", "ref": "a3f8c21", "note": "x"},
+                    {"type": etype, "ref": "ref-{}".format(etype), "note": "y"},
+                ]))
+
 
 if __name__ == "__main__":
     unittest.main()

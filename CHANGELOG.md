@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.5.0 - 2026-08-12
+
+Field report from the owner running the published skill on a real method:
+the reasoning behind a `safe` verdict was sound but arrived as one dense
+paragraph mixing four different kinds of fact at equal weight, and the
+owner said plainly that it did not read. Decomposed, the paragraph was: the
+lifetime of the reason the code existed (introduced for one purpose,
+superseded when a later refactor retired that purpose), the code's current
+isolation (zero callers, zero tests, one comment mention), a residual risk
+(unmerged branches still call the method), and plain commit references.
+
+- Evidence items may now carry an optional `role`
+  (`scripts/verdict.py`'s `EVIDENCE_ROLES`): `introduced`, `superseded`,
+  `guard`, `reference`, `risk`. `role` is additive; `validate()` already
+  tolerated unlisted keys, so an evidence item that never sets it behaves
+  exactly as before, but a typo in one that does now fails validation
+  loudly instead of silently rendering nothing. Also added `branch` to
+  `EVIDENCE_TYPES`: an unmerged branch that still calls the code under
+  investigation is legitimate evidence and previously had no way to be
+  expressed except as prose.
+- `render.py` draws three new blocks from role-tagged evidence, all near
+  the verdict rather than displacing it as the first thing in the body:
+  a compact lifetime arc when evidence carries `introduced` and/or
+  `superseded` (the argument for `safe`, so it renders high on the page,
+  and not at all when neither role is present); isolation figures, two
+  small numbers rather than a sentence, when evidence carries `guard`
+  and/or `reference` (a zero count renders as 0, since "no test guards
+  this" is exactly the fact that matters, but the whole block is omitted
+  when no role-tagged evidence exists at all, so an unchecked isolation
+  never renders as a confident zero); and a risk block for `risk`-role
+  evidence, using the same `--warn-fg`/`--warn-bg` pair the truncation and
+  candidate-cap disclosures already use rather than a new colour, so a
+  `safe` verdict with a residual risk cannot be mistaken for risk-free.
+  Every new string is localized through `_STRINGS` (`en`/`ko`); every
+  data-sourced string (refs, notes) goes through the existing `_e` escape
+  helper.
+- Sharpened `SKILL.md`'s grading table: a residual risk outside the
+  current branch does not by itself make a verdict `conditional`.
+  `conditional` means "deleting is wrong unless X holds," a precondition
+  to verify before deleting; an unmerged branch that will fail to compile
+  if merged forward later is a consequence to disclose, not a
+  precondition to check now, and stays recorded as a `risk`-role evidence
+  item instead. This was ambiguous before under the table's own wording,
+  and the field verdict that prompted this release was graded `safe` while
+  carrying exactly this kind of residual risk. `noise-catalog.md` (N10)
+  and `strategy-tree.md` (steps 7-8) now mention the roles where they
+  already discuss what evidence to gather, so the manual reading path
+  reaches for them too.
+- New tests: role validation (a known role validates, an unknown one
+  raises, `branch` validates) in `tests/test_verdict.py`; the lifetime
+  arc, isolation figures, risk block, their Korean localization, and
+  escaping through a role-tagged note in the new
+  `tests/test_render_roles.py`. All new tests build plain dicts rather
+  than a real repository, so this release adds no measurable time to the
+  suite.
+
 ## 0.4.0 - 2026-08-12
 
 Field report from the owner running the published skill on real code: the

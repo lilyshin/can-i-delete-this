@@ -147,12 +147,32 @@ history size.
 | Grade | Use when |
 |---|---|
 | `danger` | Introduced by a hotfix, incident, or revert chain, or a test guards it |
-| `conditional` | The reason was time-bound (a version, platform, migration). List the conditions |
+| `conditional` | Deleting is wrong *unless* some condition holds, and you cannot yet confirm it (the reason was time-bound: a version, platform, migration). List the conditions that must be verified before deleting |
 | `safe` | The reason demonstrably no longer applies |
 | `unknown` | You could not find evidence. This is a valid answer |
 
 A `danger` verdict with no guarding test must say so and propose the
 regression test to add first.
+
+**A residual risk outside the current branch does not by itself make a
+verdict `conditional`.** `conditional` means "deleting is wrong unless X
+holds", a precondition to check before you delete. An unmerged branch that
+still calls the code, and will fail to compile if it is ever merged
+forward, is a consequence to disclose, not a precondition to check now:
+nothing about today's delete decision changes while you wait to find out
+whether that branch ever merges, and nothing you can verify today resolves
+it either. That case stays whatever grade the evidence otherwise supports
+(often `safe`), with the hazard recorded as a `risk`-role evidence item
+(see the next paragraph) instead of being folded into `conditions`.
+
+Evidence items may carry an optional `role` (schema in `scripts/verdict.py`,
+`EVIDENCE_ROLES`): `introduced` and `superseded` tell the story of why the
+code existed and what retired that reason, the strongest evidence for
+`safe`; `guard` and `reference` record how isolated the code is today
+(guarding tests/checks that argue against deleting, and mentions that do
+not call it); `risk` records a hazard, like the unmerged branch above, that
+survives the verdict regardless of grade. `role` is optional and additive;
+an evidence item that omits it behaves exactly as it always has.
 
 ## Reference
 

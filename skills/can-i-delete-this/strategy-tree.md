@@ -161,13 +161,31 @@ of reliability:
    `artifacts.py`'s test-path convention would recognize (a `tests/`
    directory, a `test_`/`_test`/`_spec` filename, or a `.test.`/`.spec.`
    segment). A test added alongside the fix tells you what it guards against
-   better than any prose.
+   better than any prose. If you find one, it is `role: "guard"` evidence
+   (`scripts/verdict.py`'s `EVIDENCE_ROLES`); if you deliberately looked and
+   found none, that absence is worth recording too, since a `guard` count
+   of zero next to at least one other role-tagged item is exactly what
+   `render.py`'s isolation figures are for.
 2. **The PR body and linked issue.** A subject ending in `(#123)` is a
    pointer to a forge page git does not contain; go read it there.
 3. **Adjacent comments.** `git show <sha> -- <path>` for the full diff
-   context around the target lines, not just the lines themselves.
+   context around the target lines, not just the lines themselves. A
+   comment or doc that still mentions the code without calling it is
+   `role: "reference"` evidence.
 4. **CHANGELOG or release notes**, if the repository keeps one, for the date
    range around the introducing commit.
+
+While you are recovering intent, also watch for the two things that make
+the strongest case for `safe`: the commit that introduced the code
+(`role: "introduced"`) and, separately, a later commit that retired the
+reason it existed by replacing the mechanism, removing the call site, or
+migrating the behaviour elsewhere (`role: "superseded"`). Together they are
+the argument `render.py` draws as a lifetime arc near the verdict. And if
+you find a residual hazard that survives whatever grade you land on, most
+often an unmerged branch that still calls the code and would fail to
+compile if merged forward, record it as `role: "risk"` evidence (type
+`branch` fits this case) rather than folding it into `conditions`; see
+SKILL.md's Grading section for why that distinction matters.
 
 **Comes up empty (no test, no PR reference, no comment, nothing):** this is
 what `unknown` is for. Do not promote your best guess to `safe` or `danger`

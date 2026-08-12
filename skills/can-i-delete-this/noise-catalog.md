@@ -215,12 +215,14 @@ read the noise-flagged commit's own diff:
 
 If that diff is what actually added the target lines, it is the real
 introducing commit, and you may cite it as evidence even though `noise.py`
-flagged it N10. Only when the diff itself is genuinely unrelated to the
-target lines (the noise commit really did just reformat, and the target
-lines came from somewhere else entirely) is `unknown` the honest answer; do
-not manufacture a citation out of the only remaining candidate just because
-it is the only one left. See `strategy-tree.md` step 6 for the fuller
-walkthrough of this same point.
+flagged it N10 (tag it `role: "introduced"` in the verdict's evidence, per
+`scripts/verdict.py`'s `EVIDENCE_ROLES`; see SKILL.md's Grading section).
+Only when the diff itself is genuinely unrelated to the target lines (the
+noise commit really did just reformat, and the target lines came from
+somewhere else entirely) is `unknown` the honest answer; do not manufacture
+a citation out of the only remaining candidate just because it is the only
+one left. See `strategy-tree.md` step 6 for the fuller walkthrough of this
+same point.
 
 **Fixture**: F4 (`tests/test_trace_cases.py::TestF4Squash`). A single squash
 commit both rotates session tokens and reformats the module; `notes` records
