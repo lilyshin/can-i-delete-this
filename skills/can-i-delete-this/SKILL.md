@@ -104,7 +104,10 @@ history size.
 ## Workflow
 
 1. Resolve the target: file path and line range. If the user pasted a
-   snippet, locate it with `grep -n` first.
+   snippet, locate it with `grep -n` first. If you were invoked via the
+   `/can-i-delete-this:check` command, the target is already resolved and
+   confirmed; it arrives as `path:start-end` in your input, so skip
+   straight to step 2.
 2. Run the tracer:
 
    ```

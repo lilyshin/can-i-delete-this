@@ -115,8 +115,22 @@ marketplace path already does.
 ## Usage
 
 Ask, in your own words: "can I delete this," "why is this here," "who
-introduced this and why." The skill resolves the target file and line
-range, then runs:
+introduced this and why." Or use the slash command with a target already
+in hand:
+
+    /can-i-delete-this:check src/payment.py:42
+    /can-i-delete-this:check src/payment.py:10-25
+    /can-i-delete-this:check chargeCustomerOnce
+
+`path:line` and `path:start-end` skip straight to the tracer. A bare
+symbol triggers a lookup, and the command states the resolved file and
+line back to you before running anything, so it never investigates the
+wrong target silently. Run it with no argument and it asks what to check
+instead of guessing. Either entry point resolves the same target and runs
+the same workflow; the command exists only to skip typing a sentence when
+you already know what you want checked.
+
+The skill resolves the target file and line range, then runs:
 
     python3 skills/can-i-delete-this/scripts/trace.py \
       --repo <repo> --file <path> --lines <start>:<end>
@@ -299,5 +313,15 @@ tracer가 한 번에 다 풀려서 실제로 잘라낸 것이 없었기 때문�
 Gemini CLI는 `~/.agents/skills/`를 읽으므로 `AGENTS.md`에 안내된 대로
 `./skills/`를 심볼릭 링크하면 됩니다. 셸 설치 스크립트는 만들지 않았습니다.
 이 스킬은 사용자 파일에 쓰지 않으며, 표준 라이브러리 외 의존성이 없습니다.
+
+자연어 대신 슬래시 커맨드로도 시작할 수 있습니다:
+
+    /can-i-delete-this:check src/payment.py:42
+    /can-i-delete-this:check chargeCustomerOnce
+
+`path:line`이면 바로 tracer로 넘어가고, 심볼 이름만 주면 먼저 위치를
+찾아 확인을 받은 뒤 진행합니다(엉뚱한 줄을 조사하는 사고를 막기 위함).
+인자가 없으면 추측하지 않고 무엇을 볼지 물어봅니다. 어느 경로든 같은
+워크플로를 실행합니다.
 
 </details>

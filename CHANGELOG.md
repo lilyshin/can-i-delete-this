@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.6.0 - 2026-08-12
+
+Until now the skill had exactly one entry point: phrasing a natural-language
+trigger. The owner runs this daily and had to type a full sentence every
+time an argument would have done. Added a slash command, `/can-i-delete-this:check`,
+so a known target skips straight past that.
+
+- New `commands/check.md`, declared in `plugin.json`'s new `commands` key
+  alongside the existing `skills` key. Accepts `path:line`, `path:start-end`,
+  a bare symbol, or nothing:
+  - `path:line`/`path:start-end` is already a resolved target; the command
+    hands it straight to the skill.
+  - A bare symbol triggers a `grep -n` lookup, and the resolved file/line is
+    stated back to the user for confirmation before anything runs. This
+    guards against the exact failure this project has already measured
+    once: an agent answering confidently about the wrong line and
+    recommending deleting it.
+  - No argument at all makes the command ask what to check instead of
+    guessing.
+  - `allowed-tools` is `Bash, Read, Grep, Glob, Skill`: enough to resolve a
+    target and hand off, nothing that can write to the user's files, so the
+    command does not widen the skill's read-only design.
+- The command does not restate the skill's workflow; it resolves the
+  target, then invokes the `can-i-delete-this` skill for the confirmed
+  `path:start-end`, so there is exactly one place the investigation steps
+  are written (`SKILL.md`). `SKILL.md`'s step 1 now notes that a target
+  arriving from the command is already resolved and confirmed, so an agent
+  reading it does not redo the lookup.
+- README's usage section and Korean summary now show the command alongside
+  the natural-language form.
+- New tests in `tests/test_metadata.py`: `plugin.json` declares the command,
+  the command file parses and carries `description`/`allowed-tools`, that
+  `allowed-tools` excludes `Edit`/`Write`, and the body references
+  `$ARGUMENTS` and the skill name.
+
 ## 0.5.0 - 2026-08-12
 
 Field report from the owner running the published skill on a real method:
