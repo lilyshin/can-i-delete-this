@@ -57,11 +57,32 @@ import citation
 
 # Colour is a function of grade, not of language, so it is kept separate
 # from the label text in _STRINGS below.
-_BADGE_COLORS = {
-    "danger": ("#b42318", "#fee4e2"),
-    "conditional": ("#b54708", "#fef0c7"),
-    "safe": ("#027a48", "#d1fadf"),
-    "unknown": ("#475467", "#eaecf0"),
+#
+# Each grade owns one hue (foreground + wash) for both colour schemes. This
+# is the *only* place a hex value is chosen; render() writes the four values
+# for the active grade into custom properties on <body> (see the "grade-fg"
+# and "grade-wash" derivation in _CSS), and every rule in _CSS that used to
+# branch on grade now reads var(--grade-fg)/var(--grade-wash) once instead.
+# "unknown" has no hue of its own -- it points at the neutral --muted/--card
+# variables already defined in _CSS, so an inconclusive report stays grey
+# rather than borrowing a colour that would imply a verdict.
+_GRADE_HUES = {
+    "danger": {
+        "fg_light": "#A32B22", "wash_light": "#FBEAE8",
+        "fg_dark": "#F08A80", "wash_dark": "#351916",
+    },
+    "conditional": {
+        "fg_light": "#8A5A0B", "wash_light": "#FBF1DF",
+        "fg_dark": "#DCA83C", "wash_dark": "#2E2412",
+    },
+    "safe": {
+        "fg_light": "#1F7A4C", "wash_light": "#E6F4EC",
+        "fg_dark": "#5FC48D", "wash_dark": "#12281C",
+    },
+    "unknown": {
+        "fg_light": "var(--muted)", "wash_light": "var(--card)",
+        "fg_dark": "var(--muted)", "wash_dark": "var(--card)",
+    },
 }
 
 # Every piece of text this module writes around the data it renders, keyed
@@ -208,40 +229,118 @@ def _why_label(lang, why):
 
 
 _CSS = """
-:root { color-scheme: light dark; --bg:#ffffff; --fg:#101828; --muted:#667085;
-        --line:#e4e7ec; --card:#f9fafb; --code:#f2f4f7; --accent:#6941c6;
-        --accent-bg:#f4ebff; --danger:#b42318; --danger-bg:#fee4e2; }
+:root { color-scheme: light dark; --bg:#FCFCFB; --fg:#1A1D21; --muted:#6E7378;
+        --line:#E5E6E4; --card:#F7F7F5; --code:#EFEFEC;
+        --warn-fg:#A32B22; --warn-bg:#FBEAE8; }
 @media (prefers-color-scheme: dark) {
-  :root { --bg:#0c111d; --fg:#f5f5f6; --muted:#94969c; --line:#333741;
-          --card:#161b26; --code:#1f242f; --accent:#b692f6;
-          --accent-bg:#2a1f3d; --danger:#fda29b; --danger-bg:#3b1512; }
+  :root { --bg:#14161A; --fg:#E8E9EA; --muted:#8B9096; --line:#2A2E34;
+          --card:#1B1E23; --code:#22262C;
+          --warn-fg:#F08A80; --warn-bg:#351916; }
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin:0; padding:2.5rem 1.25rem 3rem; background:var(--bg); color:var(--fg);
-       font:15px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+/* --grade-fg/--grade-wash are derived here, on body, not on :root: a
+   custom property's var() references resolve against the same element's
+   own cascaded values, not lazily against whatever a descendant later
+   defines, so this rule must live on the exact element that carries the
+   --grade-*-light/-dark values render() writes inline (see render()'s
+   root_style comment for why those are inline on body rather than on
+   <html> in the first place). Every other rule below reads var(--grade-fg)
+   / var(--grade-wash) once instead of branching on grade. */
+body { --grade-fg: var(--grade-fg-light); --grade-wash: var(--grade-wash-light);
+       margin:0; padding:2.5rem 1.25rem 3rem; background:var(--bg); color:var(--fg);
+       font:15px/1.6 -apple-system, BlinkMacSystemFont, "Pretendard Variable", Pretendard,
+       "Apple SD Gothic Neo", system-ui, "Segoe UI", "Malgun Gothic", sans-serif;
+       word-break: keep-all; }
+@media (prefers-color-scheme: dark) {
+  body { --grade-fg: var(--grade-fg-dark); --grade-wash: var(--grade-wash-dark); }
+}
 main { max-width: 62rem; margin: 0 auto; }
-h1 { font-size:1.3rem; margin:0 0 .3rem; word-break:break-word; }
-h1 .path { font-weight:400; color:var(--muted); }
-.sub { color:var(--muted); margin:0 0 1.25rem; max-width:48rem; }
-.badge { display:inline-block; padding:.4rem .85rem; border-radius:999px;
-         font-weight:700; font-size:.85rem; letter-spacing:.01em; margin-bottom:1.5rem; }
+h1 { font-size:.8rem; font-weight:500; color:var(--muted); margin:0 0 1rem;
+     letter-spacing:.01em; }
+h1 .path { font-weight:600; color:var(--fg);
+           font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+           word-break: break-word; }
+.verdict { background:var(--grade-wash); border-radius:14px;
+           padding:1.4rem 1.6rem 1.6rem; margin:0 0 1.75rem; }
+.badge { display:block; font-weight:800; font-size:1.85rem; line-height:1.15;
+         letter-spacing:-.01em; color:var(--grade-fg); margin:0 0 .5rem; }
+.sub { color:var(--fg); margin:0; max-width:48rem; font-size:1.05rem; line-height:1.55; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
         padding:1.1rem 1.35rem; margin:0 0 1.25rem; }
-.card > strong { display:block; font-size:.75rem; text-transform:uppercase;
+.card-next { border-left:3px solid var(--grade-fg); }
+.section { padding:1.1rem 0 0; margin:0 0 1.25rem; border-top:1px solid var(--line); }
+.section-notes { color:var(--muted); font-size:.92rem; }
+.card > strong, .section > strong { display:block; font-size:.75rem; text-transform:uppercase;
                  letter-spacing:.06em; color:var(--muted); margin-bottom:.6rem; }
-.timeline { display:flex; flex-direction:column; }
+.timeline { display:flex; flex-direction:column; position:relative; z-index:0; }
+/* The connecting line is drawn per row, not as one line across the whole
+   container, because a row's height is content-dependent (a noise row's
+   signals text, a real row's meta line) while the dot's distance from its
+   OWN row's top edge is not (align-items:flex-start pins date/dot to the
+   top of the row regardless of how tall the entry column grows). A
+   container-spanning line sized off guessed top/bottom insets overshoots
+   past the last dot whenever the last row carries that kind of trailing
+   content -- verified by rendering a sample and reading its computed
+   layout, not by inspection alone. Splitting the line into one segment per
+   row avoids the guess entirely: a row that has a later row (":has(~
+   .row)") draws its full height; a row with no later row draws only from
+   its own top down to its own dot; a row with no earlier row draws only
+   from its own dot down to its own bottom; a row that is both (the only
+   row) draws nothing. Stacked together those segments are exactly [first
+   dot, last dot], never outside that range, and stay continuous
+   regardless of how tall any individual row's content happens to be.
+   ":has(~ .row)" rather than ":last-child" on purpose: the collapsed
+   disclosure element the History card appends after the always-visible
+   rows (see render()) is itself a later sibling, so ":last-child" never
+   matches any row once a timeline collapses, and every visible row would
+   wrongly draw as a "middle" one, overshooting the last dot by the same
+   1.6rem this comment's sibling rules are careful to stop at otherwise --
+   caught by rendering the History-collapse sample and reading its
+   computed layout. (Deliberately not spelling out that element's tag name
+   here: it would land inside the page's own style block verbatim and make
+   this project's own "no such element in a short trace" test fail on a
+   plain substring match against a code comment, not against a real
+   collapsed disclosure -- caught the same way, by running the tests.)
+   1.6rem approximates a row's own padding-top plus half the dot glyph's
+   line height -- the fixed part of a row's height that does not depend on
+   what the entry column holds. */
+.row:not(:first-child):has(~ .row)::before {
+  content:""; position:absolute; z-index:-1; left:calc(7.7rem - 1px);
+  top:0; height:100%; width:2px; background:var(--line);
+}
+.row:first-child:has(~ .row)::before {
+  content:""; position:absolute; z-index:-1; left:calc(7.7rem - 1px);
+  top:1.6rem; height:calc(100% - 1.6rem); width:2px; background:var(--line);
+}
+.row:not(:first-child):not(:has(~ .row))::before {
+  content:""; position:absolute; z-index:-1; left:calc(7.7rem - 1px);
+  top:0; height:1.6rem; width:2px; background:var(--line);
+}
+/* .row.real also carries its own margin-bottom (see the "real" rules
+   further down) to separate its highlighted wash from the row after it.
+   That margin sits outside the border box a percentage height resolves
+   against, so without this the line stops short of the next row's top by
+   exactly that margin. Bridge it on both shapes a non-last real row can
+   take (leading the timeline, or not, if the verdict cites more than one
+   commit as real) so the line does not visibly break there. */
+.row.real:first-child:has(~ .row)::before { height: calc(100% - 1.6rem + .35rem); }
+.row.real:not(:first-child):has(~ .row)::before { height: calc(100% + .35rem); }
 .row { display:flex; gap:1rem; align-items:flex-start; padding:.7rem 0;
-       border-bottom:1px dashed var(--line); overflow-x:auto; }
+       border-bottom:1px dashed var(--line); overflow-x:auto; position:relative; }
 .row:last-child { border-bottom:0; }
-.date { color:var(--muted); white-space:nowrap; min-width:6rem; padding-top:.15rem; }
-.dot { min-width:1.4rem; text-align:center; padding-top:.1rem; font-weight:700; }
+.date { color:var(--muted); white-space:nowrap; width:6rem; flex:0 0 6rem; padding-top:.15rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        word-break: break-word; }
+.dot { width:1.4rem; flex:0 0 1.4rem; text-align:center; padding-top:.1rem; font-weight:700;
+       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .entry { min-width:0; flex:1; }
-.subject { word-break:break-word; }
-.row.real { background:var(--accent-bg); border-radius:8px; margin:0 -0.5rem .35rem;
+.subject { word-break:break-word;
+           font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.row.real { background:var(--grade-wash); border-radius:8px; margin:0 -0.5rem .35rem;
             padding:.8rem 0.5rem; border-bottom:none; }
-.row.real .dot { color:var(--accent); }
-.row.real .subject { font-weight:700; color:var(--fg); }
+.row.real .dot { color:var(--grade-fg); font-size:1.15em; }
+.row.real .subject { font-weight:800; color:var(--fg); }
 .row.noise .dot { color:var(--muted); }
 .row.noise .subject { color:var(--muted); text-decoration:line-through;
                       text-decoration-color:var(--muted); text-decoration-thickness:1px; }
@@ -250,32 +349,35 @@ h1 .path { font-weight:400; color:var(--muted); }
 .tag { display:inline-block; font-size:.7rem; font-weight:700; text-transform:uppercase;
        letter-spacing:.03em; border-radius:4px; padding:.1rem .4rem; margin-left:.4rem;
        vertical-align:middle; }
-.tag.real { background:var(--accent-bg); color:var(--accent); border:1px solid var(--accent); }
+.tag.real { background:var(--grade-wash); color:var(--grade-fg); border:1px solid var(--grade-fg); }
 .tag.noise { background:var(--code); color:var(--muted); border:1px solid var(--line); }
 .signals { color:var(--muted); font-size:.8rem; margin-top:.15rem; }
 pre { background:var(--code); padding:.9rem 1rem; border-radius:8px; overflow-x:auto;
-      margin:.6rem 0 0; white-space:pre-wrap; word-break:break-word; }
+      margin:.6rem 0 0; white-space:pre-wrap; word-break:break-word;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 button { font:inherit; font-size:.85rem; cursor:pointer; border:1px solid var(--line);
          background:var(--bg); color:var(--fg); border-radius:6px;
          padding:.3rem .75rem; float:right; }
-button:hover { border-color:var(--accent); }
+button:hover { border-color:var(--grade-fg); }
 ul { margin:.4rem 0 0; padding-left:1.2rem; }
 li { margin:.15rem 0; }
 ul.checklist { list-style:none; padding-left:0; }
 ul.checklist li { position:relative; padding-left:1.7rem; margin:.4rem 0; }
-ul.checklist li::before { content:"\2610"; position:absolute; left:0; top:0;
-                          color:var(--accent); font-size:1rem; line-height:1.4; }
-.warn { color:var(--danger); background:var(--danger-bg); border-radius:8px;
+ul.checklist li::before { content:"☐"; position:absolute; left:0; top:0;
+                          color:var(--grade-fg); font-size:1rem; line-height:1.4; }
+.warn { color:var(--warn-fg); background:var(--warn-bg); border-radius:8px;
         padding:.6rem .85rem; margin:.7rem 0 0; font-size:.9rem; }
 .warn:first-child { margin-top:0; }
 .hint { color:var(--muted); font-size:.85rem; margin:.4rem 0 0; }
 code { background:var(--code); border-radius:4px; padding:.05rem .3rem;
+       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
        word-break:break-word; }
 ul.legend { list-style:none; padding:0; margin:.6rem 0 0; display:flex; flex-wrap:wrap;
             gap:.4rem 1.25rem; color:var(--muted); font-size:.8rem; }
 ul.legend li { display:flex; align-items:center; gap:.35rem; }
-ul.legend .ldot { font-weight:700; }
-ul.legend .ldot.real { color:var(--accent); }
+ul.legend .ldot { font-weight:700;
+                   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+ul.legend .ldot.real { color:var(--grade-fg); }
 ul.legend .ldot.noise { color:var(--muted); text-decoration:line-through; }
 ul.legend .ldot.revert { color:var(--muted); }
 details.history-more { margin-top:.5rem; }
@@ -284,11 +386,11 @@ details.history-more > summary { cursor:pointer; color:var(--muted); font-size:.
                                   display:flex; align-items:center; gap:.4rem;
                                   border-radius:6px; }
 details.history-more > summary::-webkit-details-marker { display:none; }
-details.history-more > summary::before { content:"\25B8"; display:inline-block;
+details.history-more > summary::before { content:"▸"; display:inline-block;
                                           font-size:.75rem; transition:transform .12s; }
-details.history-more[open] > summary::before { content:"\25BE"; }
+details.history-more[open] > summary::before { content:"▾"; }
 details.history-more > summary:hover { color:var(--fg); }
-details.history-more > summary:focus-visible { outline:2px solid var(--accent);
+details.history-more > summary:focus-visible { outline:2px solid var(--grade-fg);
                                                 outline-offset:2px; }
 details.history-more > .timeline { margin-top:.3rem; }
 """
@@ -491,7 +593,23 @@ def _legend_html(lang):
 def render(trace_data, verdict_data, *, lang="en"):
     lang = _resolve_lang(lang)
     grade = verdict_data.get("grade", "unknown")
-    fg, bg = _BADGE_COLORS.get(grade, _BADGE_COLORS["unknown"])
+    hue = _GRADE_HUES.get(grade, _GRADE_HUES["unknown"])
+    # These four custom properties are the one place the active grade's hue
+    # enters the page: every rule in _CSS that needs it reads
+    # var(--grade-fg)/var(--grade-wash), and body's own rule in _CSS derives
+    # those two from whichever of these four is active for the current
+    # colour scheme (see the dark media query right under it). They live on
+    # <body>, not <html>/:root, for two reasons: the test suite pins the
+    # exact byte contents of the <html lang="..."> tag, so no attribute can
+    # be added to that tag at all; and a custom property's var() reference
+    # resolves against the *same element's* own cascaded values, not
+    # lazily against whatever a descendant defines later -- so the derived
+    # --grade-fg/--grade-wash rule has to live on this exact element, not
+    # on an ancestor selector like :root, or the reference never resolves.
+    root_style = (
+        "--grade-fg-light:{fg_light};--grade-wash-light:{wash_light};"
+        "--grade-fg-dark:{fg_dark};--grade-wash-dark:{wash_dark};"
+    ).format(**hue)
     badge_key = "badge." + grade if ("badge." + grade) in _STRINGS[lang] else "badge.unknown"
     label = _t(lang, badge_key)
     target = trace_data.get("target", {})
@@ -675,25 +793,27 @@ def render(trace_data, verdict_data, *, lang="en"):
         "<title>can-i-delete-this: {title_line}</title>\n"
         "<style>{css}</style>\n"
         "</head>\n"
-        "<body>\n"
+        "<body style=\"{root_style}\">\n"
         "<main>\n"
         "<h1>{h1_line}</h1>\n"
-        "<div class=\"badge\" style=\"color:{fg};background:{bg}\">{label}</div>\n"
+        "<div class=\"verdict\">\n"
+        "<div class=\"badge\">{label}</div>\n"
         "<p class=\"sub\">{summary}</p>\n"
+        "</div>\n"
         "{conditions_block}\n"
-        "<div class=\"card\"><strong>{evidence_header}</strong><ul>{evidence}</ul></div>\n"
-        "<div class=\"card\">\n"
+        "<div class=\"section\"><strong>{evidence_header}</strong><ul>{evidence}</ul></div>\n"
+        "<div class=\"card card-next\">\n"
         "<button type=\"button\" data-copy=\"artifact\">{copy_label}</button>\n"
         "<strong>{next_step_header}</strong>\n"
         "<pre id=\"artifact\">{artifact}</pre>\n"
         "</div>\n"
-        "<div class=\"card\">\n"
+        "<div class=\"section\">\n"
         "<strong>{history_header}</strong>\n"
         "<div class=\"timeline\">{rows}</div>\n"
         "{legend}\n"
         "{co_changed}"
         "</div>\n"
-        "<div class=\"card\">\n"
+        "<div class=\"section section-notes\">\n"
         "<strong>{notes_header}</strong>\n"
         "<ul>{notes}</ul>\n"
         "{warnings}\n"
@@ -709,8 +829,7 @@ def render(trace_data, verdict_data, *, lang="en"):
         css=_CSS,
         js=_JS_TEMPLATE.format(copied=_t(lang, "button.copied")),
         summary=_e(verdict_data.get("summary", "")),
-        fg=fg,
-        bg=bg,
+        root_style=root_style,
         label=_e(label),
         evidence_header=_e(_t(lang, "card.evidence")),
         copy_label=_e(_t(lang, "button.copy")),

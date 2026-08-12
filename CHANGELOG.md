@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.3.0 - 2026-08-12
+
+Visual overhaul of `render.py`'s report. The page worked but read as
+generated: prose and data shared one monospace face, the palette was a
+stock purple-and-grey UI kit, the verdict (the page's entire purpose) was
+a small pill below a bigger heading, the timeline was a flat list with no
+line connecting the commits, and the font stack carried no Korean face
+even though the report now localizes to Korean.
+
+- Split type into two roles. Prose (summary, conditions, evidence notes,
+  notes, legend, card headers) now renders in a system sans stack that
+  includes Korean (`-apple-system, BlinkMacSystemFont, "Pretendard
+  Variable", Pretendard, "Apple SD Gothic Neo", system-ui, "Segoe UI",
+  "Malgun Gothic", sans-serif`). Data (SHAs, dates, paths, the artifact
+  block, commit subjects) stays on the existing monospace stack. No
+  webfont, no `@font-face`, no CDN; system stacks only.
+- Korean prose no longer breaks mid-word: `body` sets `word-break:
+  keep-all` as the prose default, and the data-bearing selectors
+  (`.date`, `.subject`, `code`, `pre`, `h1 .path`) override back to
+  `word-break: break-word` so long paths and shas still wrap instead of
+  overflowing.
+- Replaced the palette wholesale with cooler neutrals, and dropped the
+  separate purple accent entirely: each grade now owns the page's one
+  saturated hue (foreground + wash), threaded from Python into four CSS
+  custom properties on `<body>` (`--grade-fg-light/dark`,
+  `--grade-wash-light/dark`); `:root` derives the active `--grade-fg`/
+  `--grade-wash` from those once, in a dark-mode media query, so every
+  rule that used to branch on grade (the real row, its tag, the checklist
+  marker, button focus/hover) now reads the two derived variables instead.
+  `unknown` has no hue of its own; it points at the existing neutral
+  `--muted`/`--card` variables. The four values live on `<body>`, not
+  `<html>`, because the test suite pins the exact byte contents of the
+  `<html lang="...">` tag.
+- The badge and summary are now one verdict block at the top: the grade
+  label at display size in the grade hue, the summary directly under it
+  at reading size in the prose face, both sitting on the grade's wash
+  background. The target path and line range recede to a small
+  monospace line above it.
+- The timeline gained a vertical line through the dots, drawn with a CSS
+  `::before` pseudo-element on the timeline container (`:has(.row +
+  .row)` so a single-row timeline draws no line at all); the real
+  introduction's dot renders larger and filled in the grade hue.
+- Evidence, History and Notes dropped their card borders in favour of a
+  plain top rule, while Conditions and the next-step artifact (what the
+  reader acts on) keep the bordered card treatment, with the artifact
+  card also picking up a left accent rule in the grade hue.
+- No DOM structure, class name, or string this project's tests assert on
+  changed: same row classes (`row real`/`row noise`/`row revert`), same
+  `<details>` collapse, same escaping, same section order, same `lang`
+  attribute. All 204 existing tests pass unmodified.
+
 ## 0.2.2 - 2026-08-11
 
 Field report from the owner running the published skill for a Korean user:
