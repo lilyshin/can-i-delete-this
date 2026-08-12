@@ -51,6 +51,7 @@ import argparse
 import html
 import json
 import os
+import shlex
 import tempfile
 
 import citation
@@ -149,6 +150,25 @@ _STRINGS = {
 
         "button.copy": "Copy",
         "button.copied": "Copied",
+
+        "card.snippet": "Code",
+        "snippet.unavailable.missing-at-head": "This file no longer exists at "
+            "HEAD, so the target lines cannot be shown.",
+        "snippet.unavailable.out-of-range": "Line {start}-{end} is past the "
+            "end of this file at HEAD.",
+        "snippet.unavailable.binary": "This file is binary at HEAD; its "
+            "contents cannot be shown as text.",
+        "snippet.unavailable.generic": "The target lines could not be read "
+            "from this file at HEAD.",
+
+        "activity.last_touch.lines": "Target lines last touched {date} ({sha})",
+        "activity.last_touch.file": "File last touched {date} ({sha}); "
+            "target-line history was unavailable",
+        "activity.commits_last_year": "{count} commit(s) to this file in "
+            "the last year",
+        "activity.top_authors": "Main authors: {names}",
+
+        "card.repro": "Reproduce this",
     },
     "ko": {
         "badge.danger": "삭제 금지",
@@ -195,6 +215,23 @@ _STRINGS = {
 
         "button.copy": "복사",
         "button.copied": "복사됨",
+
+        "card.snippet": "코드",
+        "snippet.unavailable.missing-at-head": "이 파일은 HEAD에 더 이상 없어서 "
+            "대상 줄을 보여줄 수 없습니다.",
+        "snippet.unavailable.out-of-range": "{start}-{end}번째 줄은 HEAD 기준 "
+            "파일 끝을 넘어섰습니다.",
+        "snippet.unavailable.binary": "이 파일은 HEAD 기준 바이너리라 텍스트로 "
+            "보여줄 수 없습니다.",
+        "snippet.unavailable.generic": "HEAD 기준으로 대상 줄을 읽을 수 없습니다.",
+
+        "activity.last_touch.lines": "대상 줄 최근 수정: {date} ({sha})",
+        "activity.last_touch.file": "파일 최근 수정: {date} ({sha}); "
+            "대상 줄 단위 히스토리는 확인하지 못했습니다",
+        "activity.commits_last_year": "최근 1년간 이 파일에 커밋 {count}개",
+        "activity.top_authors": "주요 작성자: {names}",
+
+        "card.repro": "재현 명령어",
     },
 }
 
@@ -393,6 +430,30 @@ details.history-more > summary:hover { color:var(--fg); }
 details.history-more > summary:focus-visible { outline:2px solid var(--grade-fg);
                                                 outline-offset:2px; }
 details.history-more > .timeline { margin-top:.3rem; }
+.snippet-card { margin:0 0 1.75rem; }
+.snippet { overflow-x:auto; border-radius:8px; background:var(--code);
+           font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+           font-size:.82rem; line-height:1.6; }
+.snippet-row { display:flex; white-space:pre; border-left:3px solid transparent;
+               padding:0 .9rem 0 .6rem; }
+.snippet-row.target { border-left-color:var(--grade-fg); background:var(--grade-wash); }
+.snippet-num { color:var(--muted); width:2.6rem; flex:0 0 2.6rem; text-align:right;
+               padding-right:.9rem; user-select:none; }
+.snippet-code { color:var(--fg); }
+.snippet-unavailable { color:var(--muted); font-size:.9rem; margin:.3rem 0 0; }
+ul.activity { list-style:none; padding:0; margin:0 0 .8rem; display:flex; flex-wrap:wrap;
+              gap:.4rem 1.25rem; color:var(--muted); font-size:.85rem; }
+ul.activity li { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+details.repro { margin-top:1.75rem; padding-top:1.1rem; border-top:1px solid var(--line); }
+details.repro > summary { cursor:pointer; color:var(--muted); font-size:.8rem;
+                           text-transform:uppercase; letter-spacing:.06em;
+                           list-style:none; padding:.2rem 0; }
+details.repro > summary::-webkit-details-marker { display:none; }
+details.repro > summary:hover { color:var(--fg); }
+details.repro > summary:focus-visible { outline:2px solid var(--grade-fg);
+                                         outline-offset:2px; }
+details.repro > button { margin-top:.6rem; }
+details.repro > pre { white-space:pre; }
 """
 
 _JS_TEMPLATE = """
@@ -587,6 +648,175 @@ def _legend_html(lang):
         noise=_e(_t(lang, "legend.noise")),
         plain=_e(_t(lang, "legend.plain")),
         revert=_e(_t(lang, "legend.revert")),
+    )
+
+
+def _snippet_unavailable_label(lang, reason, **kwargs):
+    """Chrome for a snippet that could not be shown, keyed by `reason`
+    (trace.py's `_compute_snippet`: "missing-at-head", "out-of-range",
+    "binary"). An unrecognized reason -- most likely an older trace file
+    whose `snippet.reason` predates one of these three, or simply None --
+    falls back to a generic message rather than leaking a raw key.
+    """
+    lang = _resolve_lang(lang)
+    key = "snippet.unavailable." + str(reason)
+    template = (_STRINGS[lang].get(key) or _STRINGS["en"].get(key)
+                or _STRINGS[lang]["snippet.unavailable.generic"])
+    return template.format(**kwargs) if kwargs else template
+
+
+def _snippet_html(trace_data, lang):
+    """The target lines plus a few of context, directly under the verdict
+    block, so a reader can see what is being judged without opening an
+    editor. Reads only `trace_data["snippet"]` (trace.py's
+    `_compute_snippet`); an older trace file that predates this key simply
+    has no such entry, so this renders nothing at all rather than an empty
+    box (see the module docstring's rule that every new JSON key must be
+    tolerated absent).
+
+    Every line of source is user data straight from the repository under
+    trace, so it goes through `_e` exactly like a commit subject or
+    author name -- this is the single riskiest injection surface the page
+    has, since unlike a subject line it can be arbitrarily long and
+    contain arbitrary markup by construction (see test_render_snippet.py's
+    `</pre><script>` case).
+    """
+    snippet = trace_data.get("snippet")
+    if not isinstance(snippet, dict):
+        return ""
+    header = _e(_t(lang, "card.snippet"))
+    if not snippet.get("available"):
+        target = trace_data.get("target", {})
+        text = _e(_snippet_unavailable_label(
+            lang, snippet.get("reason"),
+            start=target.get("start", "?"), end=target.get("end", "?"),
+        ))
+        return (
+            '<div class="card snippet-card"><strong>{header}</strong>'
+            '<p class="snippet-unavailable">{text}</p></div>'
+        ).format(header=header, text=text)
+
+    lines = snippet.get("lines") or []
+    start_line = snippet.get("start_line", 1)
+    target_start = snippet.get("target_start")
+    target_end = snippet.get("target_end")
+    rows = []
+    for offset, line in enumerate(lines):
+        try:
+            num = int(start_line) + offset
+        except (TypeError, ValueError):
+            num = offset
+        in_target = (isinstance(target_start, int) and isinstance(target_end, int)
+                     and target_start <= num <= target_end)
+        rows.append(
+            '<div class="snippet-row{cls}">'
+            '<span class="snippet-num">{num}</span>'
+            '<span class="snippet-code">{code}</span>'
+            '</div>'.format(
+                cls=" target" if in_target else "",
+                num=num,
+                code=_e(line),
+            )
+        )
+    return (
+        '<div class="card snippet-card"><strong>{header}</strong>'
+        '<div class="snippet">{rows}</div></div>'
+    ).format(header=header, rows="".join(rows))
+
+
+def _activity_html(trace_data, lang):
+    """Recency and ownership facts for the History card: when the target
+    lines (or, failing that, the file) were last touched, how many commits
+    touched the file in the last year, and its main authors. Reads only
+    `trace_data["activity"]` (trace.py's `_compute_activity`); absent
+    entirely (older trace file) or with every fact degraded to None/[]
+    both render nothing, same reasoning as `_snippet_html`.
+    """
+    activity = trace_data.get("activity")
+    if not isinstance(activity, dict):
+        return ""
+    items = []
+
+    last_touch = activity.get("last_touch")
+    if isinstance(last_touch, dict) and last_touch.get("date"):
+        scope = last_touch.get("scope")
+        key = "activity.last_touch.lines" if scope == "lines" else "activity.last_touch.file"
+        items.append("<li>{}</li>".format(_t(
+            lang, key,
+            date=_day(last_touch.get("date")),
+            sha=_short(last_touch.get("sha", "")),
+        )))
+
+    commits_last_year = activity.get("commits_last_year")
+    if isinstance(commits_last_year, int) and not isinstance(commits_last_year, bool):
+        items.append("<li>{}</li>".format(_t(
+            lang, "activity.commits_last_year", count=commits_last_year)))
+
+    top_authors = activity.get("top_authors")
+    if isinstance(top_authors, list):
+        names = ", ".join(
+            "{} ({})".format(_e(a.get("name", "")), int(a.get("count") or 0))
+            for a in top_authors if isinstance(a, dict) and a.get("name")
+        )
+        if names:
+            items.append("<li>{}</li>".format(_t(lang, "activity.top_authors", names=names)))
+
+    if not items:
+        return ""
+    return '<ul class="activity">{}</ul>'.format("".join(items))
+
+
+def _cmd_line(repo, args):
+    """One reproduction command, as a copy-pasteable single line: `git -C
+    <repo> <args...>`, every token shell-quoted. `-C` (rather than a `cd`
+    prefix) so the line runs unmodified from any directory.
+    """
+    tokens = ["git", "-C", str(repo)] + [str(a) for a in args]
+    return " ".join(shlex.quote(t) for t in tokens)
+
+
+def _repro_html(trace_data, verdict_data, lang):
+    """A collapsed `<details>` at the very bottom of the page listing the
+    actual git commands this trace ran, plus `git show` for whichever
+    commit(s) the verdict cites as real. Built entirely from
+    `trace_data["commands"]` (trace.py's own recorded argv, see trace()'s
+    docstring for `commands`) and `trace_data["repo"]`, so every line here
+    is a command that this trace actually issued, not an idealized
+    rewrite -- a command trace.py chose not to run (an empty needle list,
+    a failed line-history search) simply has no entry in `commands` and so
+    never appears here either.
+
+    Absent `trace_data["repo"]` or `trace_data["commands"]` (an older
+    trace file that predates this feature) renders nothing, same
+    reasoning as `_snippet_html`/`_activity_html`.
+    """
+    repo = trace_data.get("repo")
+    commands = trace_data.get("commands")
+    if not repo or not isinstance(commands, list):
+        return ""
+
+    lines = [
+        _cmd_line(repo, c["args"]) for c in commands
+        if isinstance(c, dict) and c.get("args")
+    ]
+
+    commit_refs = citation.commit_refs(verdict_data.get("evidence"))
+    real_shas = citation.real_shas(trace_data, commit_refs)
+    for sha in sorted(real_shas):
+        lines.append(_cmd_line(repo, ["show", sha]))
+
+    if not lines:
+        return ""
+    return (
+        '<details class="repro">'
+        '<summary>{summary}</summary>'
+        '<button type="button" data-copy="repro-cmds">{copy_label}</button>'
+        '<pre id="repro-cmds">{text}</pre>'
+        '</details>'
+    ).format(
+        summary=_e(_t(lang, "card.repro")),
+        copy_label=_e(_t(lang, "button.copy")),
+        text=_e("\n".join(lines)),
     )
 
 
@@ -800,6 +1030,7 @@ def render(trace_data, verdict_data, *, lang="en"):
         "<div class=\"badge\">{label}</div>\n"
         "<p class=\"sub\">{summary}</p>\n"
         "</div>\n"
+        "{snippet_block}\n"
         "{conditions_block}\n"
         "<div class=\"section\"><strong>{evidence_header}</strong><ul>{evidence}</ul></div>\n"
         "<div class=\"card card-next\">\n"
@@ -809,6 +1040,7 @@ def render(trace_data, verdict_data, *, lang="en"):
         "</div>\n"
         "<div class=\"section\">\n"
         "<strong>{history_header}</strong>\n"
+        "{activity_block}"
         "<div class=\"timeline\">{rows}</div>\n"
         "{legend}\n"
         "{co_changed}"
@@ -818,6 +1050,7 @@ def render(trace_data, verdict_data, *, lang="en"):
         "<ul>{notes}</ul>\n"
         "{warnings}\n"
         "</div>\n"
+        "{repro_block}\n"
         "</main>\n"
         "<script>{js}</script>\n"
         "</body>\n"
@@ -831,10 +1064,12 @@ def render(trace_data, verdict_data, *, lang="en"):
         summary=_e(verdict_data.get("summary", "")),
         root_style=root_style,
         label=_e(label),
+        snippet_block=_snippet_html(trace_data, lang),
         evidence_header=_e(_t(lang, "card.evidence")),
         copy_label=_e(_t(lang, "button.copy")),
         next_step_header=_t(lang, "card.next_step", kind=_e(artifact.get("kind", ""))),
         history_header=_e(_t(lang, "card.history")),
+        activity_block=_activity_html(trace_data, lang),
         rows=rows_html or "<p>{}</p>".format(_e(_t(lang, "chrome.no_history"))),
         legend=_legend_html(lang),
         co_changed=co_changed_html,
@@ -844,6 +1079,7 @@ def render(trace_data, verdict_data, *, lang="en"):
         notes_header=_e(_t(lang, "card.notes")),
         notes=notes_html,
         warnings=warnings_html,
+        repro_block=_repro_html(trace_data, verdict_data, lang),
     )
 
 

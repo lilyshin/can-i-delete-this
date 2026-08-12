@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.4.0 - 2026-08-12
+
+Field report from the owner running the published skill on real code: the
+redesigned report looked good but was thin on information a developer
+actually acts on. Asked to pick additions, the owner chose three, and
+explicitly did not pick a references/callers list, because a grep-based
+call-site list is language-specific and would be wrong often enough to
+mislead a delete decision.
+
+- Added the target code snippet directly under the verdict block: the
+  lines being judged, plus a few lines of context on each side, line
+  numbers on the left, the target lines marked with a left rule in the
+  grade hue. `trace.py`'s new `_compute_snippet` reads it via
+  `gitq.run_git(["show", "HEAD:<path>"])` (the same shape `_tokens_from_
+  target` already used for needle selection) and degrades to a short,
+  localized explanation instead of an empty box or a crash when the path
+  no longer exists at HEAD, the line range is past the end of the file,
+  or the file is binary.
+- Added recent-change-activity facts inside the History card: when the
+  target lines (or, failing that, the file) were last touched, how many
+  commits touched the file in the last year, and its main authors by
+  commit count. Computed in `trace.py`'s new `_compute_activity`, reusing
+  the line-history search the tracer already runs wherever possible so
+  "last touched" reflects the target lines, not just the file, at no
+  extra git call. `gitq.py` gained `file_commit_count` and
+  `author_counts`, both using `--follow`, since a plain no-follow count
+  undercounts a file that was ever renamed (the same bug SKILL.md already
+  warns readers about for their own commands).
+- Added a collapsed reproduction-commands `<details>` at the very bottom
+  of the report: the actual blame, pickaxe and line-history invocations
+  this trace ran, plus `git show` for the commit the verdict cites, with
+  the real repo path filled in and a copy button reusing the existing
+  clipboard mechanism. `trace.py` now records the literal argv of every
+  search it runs in a new `commands` list (via `gitq.blame_args`/
+  `pickaxe_args`/`line_history_args`, extracted from the functions that
+  already built those argv lists, so the reproduction commands can never
+  drift from what actually ran); a search that did not run (no needle was
+  selected, line history failed) has no entry and so is never fabricated
+  in the report.
+- All three additions are new, additive JSON keys (`snippet`, `activity`,
+  `commands`, `repo`) on `trace.py`'s output. `render.py` treats every one
+  of them as optional: a trace.json from before this release, with none of
+  these keys, renders exactly as it did in 0.3.0, with no new section
+  appearing. Every new string is localized through the existing `_STRINGS`
+  table (`en`/`ko`); source file content is escaped through the same `_e`
+  helper as every other piece of data on the page.
+- Deliberately not added: a references/callers list. The owner's own
+  reasoning stands as the record for why.
+
 ## 0.3.0 - 2026-08-12
 
 Visual overhaul of `render.py`'s report. The page worked but read as

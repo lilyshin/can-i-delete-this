@@ -172,11 +172,20 @@ def commit_meta(repo, sha):
     )
 
 
-def blame_shas(repo, path, start, end):
-    out = run_git(repo, [
+def blame_args(path, start, end):
+    """The exact argv `blame_shas` passes to `run_git`, exposed so callers
+    that need to *display* the command (the reproduction-commands section
+    of the report) can show the literal invocation instead of a
+    hand-written approximation that could drift from what actually runs.
+    """
+    return [
         "blame", "-w", "-C", "-C", "-C", "--porcelain",
         "-L", "{},{}".format(start, end), "--", path,
-    ])
+    ]
+
+
+def blame_shas(repo, path, start, end):
+    out = run_git(repo, blame_args(path, start, end))
     shas = []
     for line in out.splitlines():
         parts = line.split()
@@ -190,23 +199,70 @@ def blame_shas(repo, path, start, end):
     return shas
 
 
-def pickaxe(repo, needle, path=None, max_commits=5000, since=None):
+def pickaxe_args(needle, path=None, max_commits=5000, since=None):
+    """The exact argv `pickaxe` passes to `run_git`; see `blame_args`."""
     args = ["log", "--format=%H", "-S", needle, "--max-count={}".format(max_commits)]
     if since:
         args.append("--since=" + since)
     if path:
         args.extend(["--", path])
-    return run_git(repo, args).split()
+    return args
 
 
-def line_history(repo, path, start, end, max_commits=None, since=None):
+def pickaxe(repo, needle, path=None, max_commits=5000, since=None):
+    return run_git(repo, pickaxe_args(needle, path=path, max_commits=max_commits,
+                                       since=since)).split()
+
+
+def line_history_args(path, start, end, max_commits=None, since=None):
+    """The exact argv `line_history` passes to `run_git`; see `blame_args`."""
     args = ["log", "--format=%H", "-L", "{},{}:{}".format(start, end, path)]
     if max_commits:
         args.append("--max-count={}".format(max_commits))
     if since:
         args.append("--since=" + since)
+    return args
+
+
+def line_history(repo, path, start, end, max_commits=None, since=None):
+    args = line_history_args(path, start, end, max_commits=max_commits, since=since)
     out = run_git(repo, args)
     return [l for l in out.split("\n") if _SHA_RE.match(l)]
+
+
+def file_commit_count(repo, path, since=None):
+    """Number of commits that touched `path`, following renames.
+
+    Always passes `--follow`: without it, the count only includes commits
+    that touched the file's *current* path, which undercounts a file that
+    was ever renamed (see SKILL.md's own warning about this, and
+    test_trace_cases.py::TestTwoRenames for the regression it guards).
+    """
+    args = ["log", "--format=%H", "--follow"]
+    if since:
+        args.append("--since=" + since)
+    args.extend(["--", path])
+    out = run_git(repo, args)
+    return len([l for l in out.splitlines() if l.strip()])
+
+
+def author_counts(repo, path):
+    """Author name -> commit count for every commit that touched `path`,
+    following renames (see `file_commit_count`'s docstring for why
+    `--follow` is not optional here).
+
+    Returns a plain dict, ordered by first appearance in `git log` output
+    (i.e. most-recent-author-first among ties), not sorted by count;
+    callers that want "top N authors" rank it themselves.
+    """
+    out = run_git(repo, ["log", "--format=%an", "--follow", "--", path])
+    counts = {}
+    for name in out.splitlines():
+        name = name.strip()
+        if not name:
+            continue
+        counts[name] = counts.get(name, 0) + 1
+    return counts
 
 
 def changed_paths(repo, sha):

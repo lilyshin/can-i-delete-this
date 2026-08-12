@@ -50,6 +50,21 @@ _RARITY_PROBE_LIMIT = 8
 _PATH_SCOPED_NEEDLE_LIMIT = 3
 _REPO_WIDE_NEEDLE_LIMIT = 2
 
+# Lines of context shown on each side of the target range in the report's
+# code snippet. Chosen to be enough to orient a reader without an editor
+# open, while staying short enough not to crowd the verdict block it
+# renders directly under (see render.py).
+_SNIPPET_CONTEXT = 4
+
+# How many of a file's authors (by commit count, across its whole
+# --follow'd history) the report names as "main authors".
+_TOP_AUTHORS_LIMIT = 3
+
+# How far back "commits touched this file in the last year" looks. A
+# literal string, not a timedelta, because it is handed straight to
+# `git log --since`.
+_ACTIVITY_WINDOW = "1 year ago"
+
 
 def _describe(repo, sha, why, cache):
     c, _ = _cached_meta_and_noise(repo, sha, cache)
@@ -178,6 +193,129 @@ def _select_needles(repo, path, start, end):
     return path_needles, repo_needles, notes
 
 
+def _read_snippet_source(repo, path):
+    """The target file's content at HEAD, or why it could not be read.
+
+    Deliberately separate from `_tokens_from_target`, which reads the same
+    `git show HEAD:<path>` shape for needle selection but is allowed to let
+    a RuntimeError propagate (a missing path there aborts the whole trace,
+    existing, unchanged behavior). The snippet is a lower-stakes addition
+    to the report -- it must degrade to a short explanation instead of
+    taking the rest of the trace down with it -- so it catches the same
+    failure here instead of raising.
+
+    Returns (text, reason). `reason` is None on success, or one of
+    "missing-at-head" / "binary".
+    """
+    try:
+        text = gitq.run_git(repo, ["show", "HEAD:" + path])
+    except RuntimeError:
+        return None, "missing-at-head"
+    except UnicodeDecodeError:
+        # `run_git` decodes the subprocess's stdout as text; content that
+        # is not valid text under the current locale's encoding raises
+        # here rather than returning garbage.
+        return None, "binary"
+    if "\x00" in text:
+        # Valid UTF-8 (so no UnicodeDecodeError above) but still binary by
+        # git's own convention of treating a NUL byte as the signal.
+        return None, "binary"
+    return text, None
+
+
+def _compute_snippet(repo, path, start, end, context=_SNIPPET_CONTEXT):
+    """The target lines plus a few lines of surrounding context, read from
+    HEAD, for the report to show directly under the verdict.
+
+    Never raises: a missing path, an out-of-range line range, or binary
+    content all come back as `{"available": False, "reason": ...}` so
+    render.py can say so briefly instead of crashing or showing an empty
+    box (see render.py's `_snippet_html`).
+    """
+    text, reason = _read_snippet_source(repo, path)
+    if reason:
+        return {"available": False, "reason": reason}
+    lines = text.splitlines()
+    total = len(lines)
+    if start < 1 or start > total:
+        return {"available": False, "reason": "out-of-range"}
+    # A target end past the last line is clamped rather than treated as
+    # out-of-range outright: the range still starts inside the file, so
+    # showing what exists (up to `total`) is more useful than refusing
+    # to show anything at all.
+    target_end = min(end, total) if end >= start else start
+    ctx_start = max(1, start - context)
+    ctx_end = min(total, target_end + context)
+    return {
+        "available": True,
+        "start_line": ctx_start,
+        "end_line": ctx_end,
+        "target_start": start,
+        "target_end": target_end,
+        "lines": lines[ctx_start - 1:ctx_end],
+    }
+
+
+def _file_last_touch(repo, path, cache):
+    """Fallback "last touched" when line-history is unavailable: the most
+    recent commit that touched the whole file, following renames.
+    """
+    try:
+        out = gitq.run_git(repo, ["log", "-1", "--format=%H", "--follow", "--", path])
+    except RuntimeError:
+        return None
+    sha = out.strip()
+    if not sha:
+        return None
+    c, _ = _cached_meta_and_noise(repo, sha, cache)
+    return {"sha": c.sha, "date": c.date, "scope": "file"}
+
+
+def _compute_activity(repo, path, line_history_shas, cache):
+    """Recency and ownership signals for the report's History card: when
+    the target lines (or, failing that, the file) were last touched, how
+    many commits touched the file in the last year, and its main authors
+    by commit count. This is the strongest deterministic "is this dead"
+    signal the tracer can offer, which is exactly what the tool is for.
+
+    Each fact degrades independently (None / [] / omitted key) rather than
+    taking the whole trace down: none of these are essential to the
+    strategy tree's own verdict-relevant evidence, so a git failure here
+    (a shallow clone missing history, an exotic path) must not turn into a
+    crash for the rest of trace().
+
+    `line_history_shas` is git log's own order for `-L start,end:path`,
+    which is newest-first by default, so its first element -- if the
+    caller's line-history search succeeded at all -- is already the most
+    recent commit to touch the exact target lines, at no extra git call.
+    """
+    if line_history_shas:
+        sha = line_history_shas[0]
+        c, _ = _cached_meta_and_noise(repo, sha, cache)
+        last_touch = {"sha": c.sha, "date": c.date, "scope": "lines"}
+    else:
+        last_touch = _file_last_touch(repo, path, cache)
+
+    try:
+        commits_last_year = gitq.file_commit_count(repo, path, since=_ACTIVITY_WINDOW)
+    except RuntimeError:
+        commits_last_year = None
+
+    try:
+        counts = gitq.author_counts(repo, path)
+    except RuntimeError:
+        counts = {}
+    ranked = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+    top_authors = [{"name": name, "count": count}
+                    for name, count in ranked[:_TOP_AUTHORS_LIMIT]]
+
+    return {
+        "last_touch": last_touch,
+        "commits_last_year": commits_last_year,
+        "top_authors": top_authors,
+    }
+
+
 def trace(repo, path, start, end, *, max_commits=5000, since=None,
           max_candidates=200, include_commits=None):
     notes = []
@@ -240,20 +378,47 @@ def trace(repo, path, start, end, *, max_commits=5000, since=None,
     path_needles, repo_needles, needle_notes = _select_needles(repo, path, start, end)
     notes.extend(needle_notes)
 
+    # `commands` records the actual argv of every git search this trace
+    # ran, in the order it ran them, so the report's reproduction-commands
+    # section (render.py's `_repro_html`) can show a skeptical reader the
+    # real invocations instead of an idealized rewrite. A needle or search
+    # that never ran (an empty needle list, a line-history failure) simply
+    # never gets an entry here -- see each append site below for why.
+    commands = [{"kind": "blame", "args": gitq.blame_args(path, start, end)}]
+
     for needle in path_needles:
+        commands.append({
+            "kind": "pickaxe", "scope": "path", "needle": needle,
+            "args": gitq.pickaxe_args(needle, path=path, max_commits=max_commits, since=since),
+        })
         for sha in gitq.pickaxe(repo, needle, path=path, max_commits=max_commits, since=since):
             add(sha, "pickaxe")
 
     for needle in repo_needles:
+        commands.append({
+            "kind": "pickaxe", "scope": "repo", "needle": needle,
+            "args": gitq.pickaxe_args(needle, max_commits=max_commits, since=since),
+        })
         for sha in gitq.pickaxe(repo, needle, max_commits=max_commits, since=since):
             add(sha, "pickaxe")
 
+    line_history_shas = []
     try:
-        for sha in gitq.line_history(repo, path, start, end,
-                                     max_commits=max_commits, since=since):
-            add(sha, "line-history")
+        line_history_shas = gitq.line_history(repo, path, start, end,
+                                              max_commits=max_commits, since=since)
     except RuntimeError as exc:
+        # No entry appended to `commands`: this search did not actually
+        # produce a result, so a reproduction command for it would not
+        # "match what the code actually ran" (it would just fail again).
         notes.append("line history unavailable: {}".format(exc))
+    else:
+        commands.append({
+            "kind": "line-history",
+            "args": gitq.line_history_args(path, start, end,
+                                            max_commits=max_commits, since=since),
+        })
+    for sha in line_history_shas:
+        add(sha, "line-history")
 
     # A commit an agent names explicitly (SKILL.md's short-history path,
     # where `git log -p --follow` surfaced a commit that blame, pickaxe and
@@ -337,12 +502,24 @@ def trace(repo, path, start, end, *, max_commits=5000, since=None,
         "log", "--format=%H", "--max-count={}".format(max_commits + 1),
     ]).split())
 
+    # snippet and activity are both report-facing additions, not evidence
+    # the strategy tree reasons about, so neither is allowed to take the
+    # rest of trace() down with it: _compute_snippet never raises on its
+    # own (see its docstring), and _compute_activity degrades each of its
+    # three facts independently.
+    snippet = _compute_snippet(repo, path, start, end)
+    activity = _compute_activity(repo, path, line_history_shas, cache)
+
     return {
         "target": {"path": path, "start": start, "end": end},
+        "repo": repo,
         "blame_candidates": blame_candidates,
         "introduction_candidates": candidates,
         "revert_chain": revert_chain,
         "co_changed": co_changed,
+        "snippet": snippet,
+        "activity": activity,
+        "commands": commands,
         "limits": {"max_commits": max_commits, "since": since,
                    "truncated": total > max_commits,
                    "max_candidates": max_candidates,

@@ -743,6 +743,107 @@ def build_needle_junk_probe(dest: str) -> dict:
     }
 
 
+def build_activity_probe(dest: str) -> dict:
+    """A single-line file touched by two authors across a known split of
+    old and recent commits, for testing trace.py's activity computation
+    (last touch, commits in the last year, main authors) against ground
+    truth rather than against "however many commits happen to exist".
+
+    Dates are relative to "now" (`_days_ago`), deliberately unlike every
+    other fixture in this module: the fact under test, "commits in the
+    last year", is itself relative to "now", so a fixed historical date
+    would drift out of (or never enter) the window depending on when the
+    test happens to run.
+
+    Five commits: two by Alice more than a year old (outside the
+    `--since "1 year ago"` window trace.py uses), two by Bob within the
+    window, and a fifth by Alice, also within the window, that is the
+    file's most recent touch. Since the file is a single line, every
+    commit touches the target line directly, so "last touched (target
+    lines)" and "last touched (file)" agree here; that distinction is
+    exercised separately (see the line-history-unavailable case in
+    test_trace_report_additions.py). Expected facts:
+      - commits_last_year: 3 (Bob's two, plus Alice's most recent)
+      - top_authors by total history: Alice 3, Bob 2
+      - last_touch: Alice's most recent commit
+    """
+    repo = _init(dest, "activity_probe")
+    target = repo / "svc.py"
+
+    def _commit_as(message, days_ago, name, email):
+        env = dict(os.environ)
+        env.update(ENV)
+        env["GIT_AUTHOR_NAME"] = name
+        env["GIT_AUTHOR_EMAIL"] = email
+        env["GIT_COMMITTER_NAME"] = name
+        env["GIT_COMMITTER_EMAIL"] = email
+        env["GIT_CONFIG_GLOBAL"] = os.devnull
+        env["GIT_CONFIG_SYSTEM"] = os.devnull
+        date = _days_ago(days_ago)
+        env["GIT_AUTHOR_DATE"] = date
+        env["GIT_COMMITTER_DATE"] = date
+        subprocess.run(["git", "add", "-A"], cwd=repo, env=env, check=True,
+                        capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo, env=env,
+                        check=True, capture_output=True, text=True)
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, env=env,
+                               capture_output=True, text=True, check=True).stdout.strip()
+
+    target.write_text("VALUE = 0\n")
+    _commit_as("feat: add value", 800, "Alice", "alice@example.com")
+
+    target.write_text("VALUE = 1\n")
+    _commit_as("chore: alice tweak", 750, "Alice", "alice@example.com")
+
+    target.write_text("VALUE = 2\n")
+    _commit_as("chore: bob tweak one", 300, "Bob", "bob@example.com")
+
+    target.write_text("VALUE = 3\n")
+    _commit_as("chore: bob tweak two", 200, "Bob", "bob@example.com")
+
+    target.write_text("VALUE = 4\n")
+    last_sha = _commit_as("chore: alice most recent tweak", 10, "Alice", "alice@example.com")
+
+    return {
+        "repo": str(repo),
+        "path": "svc.py",
+        "line": 1,
+        "last_sha": last_sha,
+        "commits_last_year": 3,
+        "top_author": "Alice",
+        "top_author_count": 3,
+        "second_author": "Bob",
+        "second_author_count": 2,
+    }
+
+
+def build_no_needle_target(dest: str) -> dict:
+    """A target line with no pickaxe-needle-shaped tokens at all (a bare
+    numeric literal, so `trace._WORD` finds nothing on it), for testing
+    that the reproduction-commands section omits the pickaxe search
+    entirely when `_select_needles` legitimately selects none, rather
+    than fabricating one (see render.py's `_repro_html`).
+    """
+    repo = _init(dest, "no_needle_target")
+    target = repo / "const.py"
+    target.write_text("def get():\n    42\n")
+    real_sha = _commit(repo, "feat: add magic constant", "2020-01-01T10:00:00")
+    return {"repo": str(repo), "path": "const.py", "line": 2, "real_sha": real_sha}
+
+
+def build_binary_target(dest: str) -> dict:
+    """A target path whose content at HEAD is binary, for testing that
+    trace.py's snippet computation (`_compute_snippet`) degrades to
+    `{"available": False, "reason": "binary"}` instead of crashing or
+    handing render.py bytes it cannot safely treat as text.
+    """
+    repo = _init(dest, "binary_target")
+    target = repo / "blob.bin"
+    target.write_bytes(b"\x00\x01\x02binary\xff\xfe\xfd")
+    sha = _commit(repo, "feat: add binary blob", "2021-01-01T10:00:00")
+    return {"repo": str(repo), "path": "blob.bin", "line": 1, "sha": sha}
+
+
 def build_korean_paths(dest: str) -> dict:
     """Korean commit messages and a Korean target filename, co-changed with
     a Korean-named test file under an ASCII `tests/` directory.
