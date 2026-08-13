@@ -65,14 +65,58 @@ _TOP_AUTHORS_LIMIT = 3
 # `git log --since`.
 _ACTIVITY_WINDOW = "1 year ago"
 
+# Characters of commit body carried per candidate. The body is where intent
+# usually lives (a subject like `fix: guard charge` grades nothing), and
+# `gitq.commit_meta` already reads it, so passing it on costs no git call.
+# It is capped because it is unbounded upstream and a capped trace holds up
+# to `max_candidates` of them: measured over 60 commits of a real
+# 20,000-commit repository, bodies ran to a median of 280 characters and a
+# maximum of 3,725, so 600 carries most messages whole while keeping the
+# worst case off the agent's context. A cut body is disclosed with
+# `body_truncated`, since an agent that believes it read the whole message
+# would stop looking.
+_BODY_LIMIT = 600
+
+
+def _body_fields(commit):
+    body = commit.body or ""
+    if len(body) > _BODY_LIMIT:
+        return {"body": body[:_BODY_LIMIT], "body_truncated": True}
+    return {"body": body, "body_truncated": False}
+
 
 def _describe(repo, sha, why, cache):
-    c, _ = _cached_meta_and_noise(repo, sha, cache)
-    return {
+    c, v = _cached_meta_and_noise(repo, sha, cache)
+    out = {
         "sha": c.sha, "why": why, "subject": c.subject, "date": c.date,
         "author": c.author, "author_email": c.author_email,
         "files_changed": c.files_changed,
+        # Vocabulary the subject matched. A candidate is here *because* no
+        # signal filtered it, so `signals` would be empty by construction
+        # and is not carried; `hints` are the part still worth reading, and
+        # SKILL.md rule 7 is what tells an agent how much they are worth.
+        # Free to include: the verdict is already computed and cached.
+        "hints": list(v.hints),
     }
+    out.update(_body_fields(c))
+    return out
+
+
+class _ScoreCache(dict):
+    """Memoizes commit_meta + noise scoring per sha within one trace()
+    call, and carries the target path every scoring decision is made
+    against.
+
+    The path lives on the cache rather than travelling as an argument
+    through all eight call sites for a reason: the cosmetic check is
+    path-scoped, so if some callers passed a path and others did not, the
+    verdict a sha got would depend on which code path reached it first
+    and then be reused by everyone else.
+    """
+
+    def __init__(self, path=None):
+        super().__init__()
+        self.path = path
 
 
 def _cached_meta_and_noise(repo, sha, cache):
@@ -80,10 +124,12 @@ def _cached_meta_and_noise(repo, sha, cache):
     if sha in cache:
         return cache[sha]
     c = gitq.commit_meta(repo, sha)
+    path = getattr(cache, "path", None)
     v = noise.score(
         c,
         whitespace_only=gitq.is_whitespace_only(repo, sha),
         paths=gitq.changed_paths(repo, sha),
+        diff_lines=gitq.diff_lines(repo, sha, path) if path else None,
     )
     cache[sha] = (c, v)
     return c, v
@@ -319,17 +365,20 @@ def _compute_activity(repo, path, line_history_shas, cache):
 def trace(repo, path, start, end, *, max_commits=5000, since=None,
           max_candidates=200, include_commits=None):
     notes = []
-    cache = {}
+    cache = _ScoreCache(path)
     blame_candidates = []
     blame_shas = gitq.blame_shas(repo, path, start, end)
     for sha in blame_shas:
         c, v = _cached_meta_and_noise(repo, sha, cache)
-        blame_candidates.append({
+        entry = {
             "sha": c.sha, "subject": c.subject, "date": c.date,
             "author": c.author,
             "noise": {"is_noise": v.is_noise, "category": v.category,
-                      "confidence": v.confidence, "signals": list(v.signals)},
-        })
+                      "confidence": v.confidence, "signals": list(v.signals),
+                      "hints": list(v.hints)},
+        }
+        entry.update(_body_fields(c))
+        blame_candidates.append(entry)
 
     candidates = []
     seen = set()
@@ -432,7 +481,7 @@ def trace(repo, path, start, end, *, max_commits=5000, since=None,
     # never becomes a candidate. It is deliberately not routed through
     # `add()`: unlike a blame/pickaxe/line-history hit, an explicitly named
     # commit is never noise-filtered out (SKILL.md's own workflow already
-    # asks agents to cite a noise-flagged N10 squash commit when its diff,
+    # asks agents to cite a noise-flagged commit when its diff,
     # not its message, is what actually introduced the target lines, and a
     # commit an agent points at by name deserves the same trust), and it is
     # exempt from the candidate cap for the same reason blame is: naming one

@@ -28,11 +28,17 @@ list membership alone:
   never struck through.
 - When the verdict cites a commit that blame_candidates flags noisy, both
   facts render on the *same* row: bold "real introduction" plus the noise
-  category as a second tag. This is not a contradiction to hide -- it is
-  exactly the situation noise-catalog.md's N10 entry describes, and the
-  page should say so rather than pick one fact and drop the other. The
-  same commit never gets a second, separate noise row once it has been
-  rendered as real.
+  category as a second tag. This is not a contradiction to hide -- a
+  hand-resolved merge commit (N9) is filtered on its parent count and can
+  still be where a line was introduced -- and the page should say so
+  rather than pick one fact and drop the other. The same commit never gets
+  a second, separate noise row once it has been rendered as real.
+- Any row, of any of those kinds, also carries its `hints`: vocabulary its
+  subject matched, rendered as a claim rather than a finding (see
+  `_hints_html`). Since 0.7.0 a subject filters nothing, so the commit
+  whose subject looks like a PR title is an ordinary candidate on this
+  page; without the hint the reader would see no reason to distrust what
+  its subject says.
 
 A reader should not need to read any prose to see which commit is the
 answer and which one git blame lied about, but this module also must not
@@ -118,6 +124,7 @@ _STRINGS = {
 
         "tag.real": "real introduction",
         "tag.also_noise": "also flagged noise",
+        "hints.prefix": "subject claims",
         "tag.blame_pointed": "blame pointed here",
         "tag.revert_chain": "revert chain",
 
@@ -195,6 +202,7 @@ _STRINGS = {
 
         "tag.real": "실제 도입 커밋",
         "tag.also_noise": "노이즈로도 채점됨",
+        "hints.prefix": "제목이 주장하는 것",
         "tag.blame_pointed": "blame이 지목한 커밋",
         "tag.revert_chain": "revert 체인",
 
@@ -409,6 +417,7 @@ h1 .path { font-weight:600; color:var(--fg);
 .tag.real { background:var(--grade-wash); color:var(--grade-fg); border:1px solid var(--grade-fg); }
 .tag.noise { background:var(--code); color:var(--muted); border:1px solid var(--line); }
 .signals { color:var(--muted); font-size:.8rem; margin-top:.15rem; }
+.hints { color:var(--muted); font-size:.8rem; margin-top:.15rem; font-style:italic; }
 pre { background:var(--code); padding:.9rem 1rem; border-radius:8px; overflow-x:auto;
       margin:.6rem 0 0; white-space:pre-wrap; word-break:break-word;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -544,8 +553,9 @@ def _real_row(candidate, *, noise=None, lang="en"):
     `noise` is that same candidate's own noise verdict, when known. When
     `noise["is_noise"]` is true, the cited commit is both the real
     introduction and a commit noise.py would have flagged on its own --
-    exactly the N10 situation noise-catalog.md documents (a squash commit
-    whose message cannot be trusted, but whose diff is). Both facts render
+    exactly the situation noise-catalog.md documents (a hand-resolved
+    merge, filtered on its parent count, whose diff nonetheless introduced
+    the target line). Both facts render
     on this one row; nothing about this candidate is ever rendered as a
     second, separate noise row elsewhere (see render()).
     """
@@ -575,7 +585,7 @@ def _real_row(candidate, *, noise=None, lang="en"):
         '<span class="entry">'
         '<span class="subject">{sha} {subject}</span>'
         '<span class="tag real">{real_tag}</span>'
-        '{noise}'
+        '{noise}{hints}'
         '<div class="meta">{who} &middot; {why}</div>'
         '</span></div>'
     ).format(
@@ -584,6 +594,7 @@ def _real_row(candidate, *, noise=None, lang="en"):
         subject=_e(candidate.get("subject", "")),
         real_tag=_e(_t(lang, "tag.real")),
         noise=noise_html,
+        hints=_hints_html(candidate, noise=noise, lang=lang),
         who=who,
         why=_e(why_label),
     )
@@ -608,14 +619,43 @@ def _plain_row(candidate, *, show_why=False, lang="en"):
         '<span class="dot">&#9675;</span>'
         '<span class="entry">'
         '<span class="subject">{sha} {subject}</span>'
-        '{meta}'
+        '{hints}{meta}'
         '</span></div>'
     ).format(
         date=_day(candidate.get("date")),
         sha=_short(candidate.get("sha", "")),
         subject=_e(candidate.get("subject", "")),
+        hints=_hints_html(candidate, lang=lang),
         meta=meta_html,
     )
+
+
+def _hints_html(candidate, *, noise=None, lang="en"):
+    """Vocabulary the subject matched, rendered as a claim rather than a
+    finding.
+
+    Hints never filter (see noise.py), so a candidate carrying one is still
+    on the page and still the reader's to judge. Showing them matters most
+    on rows that are *not* noise: before 0.7.0 a PR-title-shaped subject
+    over hundreds of files was filtered, and the row explaining itself was
+    a noise row. Now that commit is an ordinary candidate, and without this
+    the page would show it with no indication of why its subject cannot be
+    taken at face value.
+    """
+    # Three shapes reach this function: a blame candidate (hints nested
+    # under its own `noise`), an introduction candidate (hints at the top
+    # level, since `_describe` carries no signals), and the cited real row
+    # (candidate from `introduction_candidates`, noise verdict passed in
+    # separately by `render()` from the matching blame entry).
+    hints = (candidate.get("noise") or {}).get("hints") or []
+    if not hints:
+        hints = candidate.get("hints") or []
+    if not hints and noise:
+        hints = noise.get("hints") or []
+    if not hints:
+        return ""
+    return '<div class="hints">{}: {}</div>'.format(
+        _e(_t(lang, "hints.prefix")), "; ".join(_e(h) for h in hints))
 
 
 def _noise_row(candidate, *, lang="en"):
@@ -636,7 +676,7 @@ def _noise_row(candidate, *, lang="en"):
         '<span class="entry">'
         '<span class="subject">{sha} {subject}</span>'
         '<span class="tag noise">{tag}</span>'
-        '{signals}'
+        '{signals}{hints}'
         '</span></div>'
     ).format(
         date=_day(candidate.get("date")),
@@ -644,6 +684,7 @@ def _noise_row(candidate, *, lang="en"):
         subject=_e(candidate.get("subject", "")),
         tag=_e(tag_text),
         signals=signals_html,
+        hints=_hints_html(candidate, lang=lang),
     )
 
 
@@ -1033,7 +1074,7 @@ def render(trace_data, verdict_data, *, lang="en"):
     # fix report). Only the agent's own verdict knows that. citation.py
     # searches both introduction_candidates and blame_candidates, because a
     # cited commit is not guaranteed to be in the first list at all -- see
-    # this module's docstring and citation.py's for the N10 case where it
+    # this module's docstring and citation.py's for the case where it
     # is not.
     #
     # real_introduction_refs, not commit_refs: an evidence item tagged

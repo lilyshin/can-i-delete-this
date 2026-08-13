@@ -100,6 +100,21 @@ history size.
    about, and recommend deleting it. Nothing in its answer revealed the
    mismatch. If you cannot resolve the target unambiguously, say so instead
    of guessing which line was meant.
+7. **Read every candidate's subject yourself, in whatever language it is
+   written, and treat `hints` as claims rather than findings.** The tracer
+   filters a commit only on what it changed: the diff, the paths, the
+   commit graph (`noise.signals`, and `is_noise` follows from those alone).
+   Vocabulary in the subject is reported separately as `noise.hints`,
+   because a regex that reads subjects works in one language and silently
+   fails in every other, and because a commit saying `chore: apply
+   formatter` while changing a timeout value is lying to you. You are the
+   part of this pipeline that reads human language, all of it, so a
+   Japanese subject or a bare `cleanup` is yours to interpret and no
+   tooling has pre-judged it for you. Two consequences to expect:
+   candidate lists are slightly longer than they would be under
+   subject-filtering, and a commit carrying a hint like `PR-title shaped
+   subject over 310 files` is still a candidate you must judge by its
+   diff, not one already dismissed.
 
 ## Workflow
 
@@ -114,20 +129,27 @@ history size.
    python3 <skill>/scripts/trace.py --repo <repo> --file <path> --lines <start>:<end>
    ```
 
-3. Read the JSON. `blame_candidates` marked `is_noise` are debris; see
-   noise-catalog.md for what each category means.
+3. Read the JSON. `blame_candidates` marked `is_noise` are debris on the
+   evidence of their diff, paths or parent count; `noise.hints` alongside
+   them are claims made by the subject line and dismiss nothing (rule 7).
+   See noise-catalog.md for what each category means.
 4. If `introduction_candidates` is empty, follow strategy-tree.md before
    concluding anything. In particular: if every `blame_candidates` entry is
-   noise and nothing else surfaced a candidate, do not stop at `unknown` yet.
-   Read the noise commit's own diff with `git show <sha> -- <path>`. A
-   commit is filtered as noise (a squash commit, N10, is the common case)
-   because its *message* cannot be trusted for intent, not because its
-   *diff* is unrelated to the target lines. If that diff is what actually
-   added the target lines, it is the real introducing commit, and you may
-   cite it even though `noise.py` flagged it.
-5. Recover intent. Commit subjects are usually useless. Prefer, in order:
-   tests added in the same commit, the PR body, linked issues, adjacent
-   comments.
+   noise and nothing else surfaced a candidate, do not stop at `unknown`
+   yet. Read the noise commit's own diff with `git show <sha> -- <path>`.
+   A commit is filtered because of what its diff looked like *across the
+   whole commit* (a merge, a vendored dump, a cosmetic rewrite), which is
+   not the same fact as "its diff is unrelated to the target lines". If
+   that diff is what actually added the target lines, it is the real
+   introducing commit, and you may cite it even though `noise.py` flagged
+   it.
+5. Recover intent. Commit subjects are usually useless on their own, so
+   every candidate carries its `body` (capped at 600 characters, with
+   `body_truncated` set when it was cut, in which case `git show <sha>`
+   has the rest). Read it: `fix: guard charge` grades nothing, while its
+   body naming the incident and the ticket grades `danger`. Then prefer,
+   in order: tests added in the same commit, the PR body, linked issues,
+   adjacent comments.
 6. If step 5 (or your own reading of a short history, per the section
    above) points at a commit that is not already in `introduction_candidates`
    or `blame_candidates`, re-run the tracer once more with
@@ -179,5 +201,7 @@ an evidence item that omits it behaves exactly as it always has.
 
 ## Reference
 
-- noise-catalog.md: the eleven debris categories and how to route around each
+- noise-catalog.md: the eleven debris categories, which of them filter (on
+  diff evidence) versus only hint (on subject vocabulary), and how to route
+  around each
 - strategy-tree.md: what to do when the obvious path comes up empty

@@ -3,7 +3,7 @@
   "owner": { "name": "lilyshin" },
   "metadata": {
     "description": "Trace why a line of code exists and grade whether it is safe to delete",
-    "version": "0.6.1",
+    "version": "0.7.0",
     "pluginRoot": "."
   },
   "plugins": [
@@ -11,7 +11,7 @@
       "name": "can-i-delete-this",
       "source": "./",
       "description": "Finds the real introducing commit behind formatter noise, renames and squashed history, then grades deletion risk with evidence.",
-      "version": "0.6.1",
+      "version": "0.7.0",
       "keywords": ["git", "blame", "archaeology", "legacy", "refactoring", "pickaxe", "레거시", "코드삭제"]
     }
   ]

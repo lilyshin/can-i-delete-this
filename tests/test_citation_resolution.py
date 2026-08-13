@@ -60,11 +60,17 @@ def _rows_mentioning(html, sha):
 
 
 class TestBlameOnlyCitation(unittest.TestCase):
-    """F4: the real commit is a squash (N10). Noise filtering drops it out
-    of introduction_candidates entirely, leaving it only in
-    blame_candidates, flagged is_noise. A verdict that cites it anyway
-    (per the diff-reading route SKILL.md and noise-catalog.md's N10 entry
-    teach) must be honored by both render.py and artifacts.py.
+    """F4: the real commit is a squash whose subject names the pull
+    request, not this change.
+
+    Until 0.7.0 that subject shape filtered the commit out of
+    `introduction_candidates` entirely, and these tests pinned that a
+    verdict citing it anyway was still honored. Filtering on a subject is
+    gone: an untrustworthy description is a reason to distrust the
+    description, not to discard the commit, and discarding it here
+    discarded the only commit that ever touched the target line. The
+    squash now reaches the candidate list carrying a hint that says what
+    its subject is worth, and the rendering guarantees below are unchanged.
     """
 
     def setUp(self):
@@ -74,18 +80,20 @@ class TestBlameOnlyCitation(unittest.TestCase):
         self.trace = tracer.trace(self.info["repo"], self.info["path"],
                                    self.info["line"], self.info["line"])
 
-    def test_premise_real_commit_is_blame_only_and_noise_flagged(self):
-        """Pin the setup: if trace.py or noise.py change so this commit
-        starts showing up in introduction_candidates, or stops being
-        flagged noise, this fixture no longer exercises the bug and the
-        tests below would pass for the wrong reason.
-        """
-        self.assertEqual(self.trace["introduction_candidates"], [])
+    def test_premise_squash_reaches_candidates_with_a_hint(self):
+        """Pin the setup: the squash is a candidate (its diff is the only
+        evidence there is for this line), it is not filtered, and the
+        untrustworthiness of its subject is passed on as a hint rather
+        than acted on."""
+        shas = [c["sha"] for c in self.trace["introduction_candidates"]]
+        self.assertIn(self.info["real_sha"], shas)
         self.assertEqual(len(self.trace["blame_candidates"]), 1)
         blamed = self.trace["blame_candidates"][0]
         self.assertEqual(blamed["sha"], self.info["real_sha"])
-        self.assertTrue(blamed["noise"]["is_noise"])
-        self.assertEqual(blamed["noise"]["category"], "N10")
+        self.assertFalse(blamed["noise"]["is_noise"])
+        self.assertTrue(
+            any("PR-title shaped" in h for h in blamed["noise"]["hints"]),
+            "the agent should be told the subject may name the PR, not the change")
 
     def test_render_marks_the_cited_blame_only_commit_real(self):
         verdict = _verdict_citing(self.info["real_sha"][:7])
@@ -95,15 +103,26 @@ class TestBlameOnlyCitation(unittest.TestCase):
         self.assertIn('class="row real"', rows[0])
         self.assertIn('class="tag real">real introduction', rows[0])
 
-    def test_render_still_surfaces_the_noise_category_on_the_real_row(self):
+    def test_render_surfaces_the_noise_category_on_a_cited_noise_row(self):
         """"Real introduction" and "also noise" are not a contradiction to
-        pick between: this is exactly the N10 situation noise-catalog.md
-        documents, and the page should say both, on the one row.
+        pick between, and the page should say both on the one row.
+
+        Re-pointed at a merge commit for 0.7.0: a hand-resolved merge is
+        genuinely filtered (N9, from the commit graph, no subject read)
+        and can genuinely be where a line was introduced, which is the
+        situation this guarantee is for. The squash this class otherwise
+        uses is no longer filtered at all.
         """
-        verdict = _verdict_citing(self.info["real_sha"][:7])
-        html = render.render(self.trace, verdict)
-        rows = _rows_mentioning(html, self.info["real_sha"])
-        self.assertIn("N10", rows[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_f7(tmp)
+            data = tracer.trace(info["repo"], info["path"], info["line"],
+                                 info["line"])
+            merge_sha = info["merge_sha"]
+            verdict = _verdict_citing(merge_sha[:7])
+            html = render.render(data, verdict)
+            rows = _rows_mentioning(html, merge_sha)
+            self.assertTrue(rows, "the cited merge commit should have a row")
+            self.assertIn("N9", rows[0])
 
     def test_cited_commit_never_gets_a_separate_noise_row(self):
         verdict = _verdict_citing(self.info["real_sha"][:7])
@@ -193,12 +212,13 @@ class TestExplicitlyIncludedCommit(unittest.TestCase):
     `blame_candidates`, exactly as it was before this correction: no third
     source, no reading of evidence-supplied descriptive fields anywhere.
 
-    Uses the real F4 fixture (a squash commit, N10-flagged, so by default
-    `introduction_candidates` comes up empty) for two things at once:
-    proving an explicitly included commit that noise filtering would
-    otherwise exclude still becomes a candidate, and proving its rendered
+    Uses the real F4 fixture (a squash commit) to prove the rendered
     subject/date/author come from git even when the verdict's own evidence
-    carries a different, fabricated subject alongside the real ref.
+    carries a different, fabricated subject alongside the real ref. The
+    separate guarantee, that `--include-commit` can surface a commit noise
+    filtering excluded, needs a commit that is actually filtered, which
+    since 0.7.0 means a structural signal rather than a subject; it is
+    tested against F7's merge commit below.
     """
 
     def setUp(self):
@@ -207,15 +227,27 @@ class TestExplicitlyIncludedCommit(unittest.TestCase):
         self.info = make_fixture_repo.build_f4(self.tmp.name)
 
     def test_include_commit_surfaces_a_noise_filtered_commit(self):
-        result = tracer.trace(self.info["repo"], self.info["path"],
-                               self.info["line"], self.info["line"],
-                               include_commits=[self.info["real_sha"]])
-        cand = next((c for c in result["introduction_candidates"]
-                     if c["sha"] == self.info["real_sha"]), None)
-        self.assertIsNotNone(cand, "explicitly included commit must become a candidate")
-        self.assertEqual(cand["why"], "cited")
-        self.assertEqual(cand["subject"],
-                         "Rotate token on idle sessions and reformat module (#2211)")
+        """A merge commit is filtered from candidates on the commit graph
+        alone (N9), so it is what proves `--include-commit` recovers a
+        commit the tracer excluded."""
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_f7(tmp)
+            default = tracer.trace(info["repo"], info["path"], info["line"],
+                                    info["line"])
+            self.assertNotIn(
+                info["merge_sha"],
+                [c["sha"] for c in default["introduction_candidates"]],
+                "premise: the merge commit is filtered by default")
+
+            result = tracer.trace(info["repo"], info["path"], info["line"],
+                                   info["line"],
+                                   include_commits=[info["merge_sha"]])
+            cand = next((c for c in result["introduction_candidates"]
+                         if c["sha"] == info["merge_sha"]), None)
+            self.assertIsNotNone(
+                cand, "explicitly included commit must become a candidate")
+            self.assertEqual(cand["why"], "cited")
+            self.assertEqual(cand["subject"], "Merge branch 'feature'")
 
     def test_render_and_artifact_use_git_metadata_not_the_evidence_note(self):
         result = tracer.trace(self.info["repo"], self.info["path"],

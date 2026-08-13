@@ -1,5 +1,84 @@
 # Changelog
 
+## 0.7.0 - 2026-08-13
+
+Noise classification no longer reads the commit subject to decide anything.
+A subject is a description of a change, written in whatever language its
+author speaks under whatever convention (or none) their repository follows,
+and filtering on it failed in both directions at once.
+
+It failed for every language but English: a 25-file quote-style sweep titled
+`잡일: 저장소 전체 포맷터 적용` scored `is_noise: false` with zero signals,
+while the identical commit titled `chore: apply formatter` scored N1. Adding
+a Korean lexicon would not have fixed it, because the next repository writes
+Japanese, or German, or `cleanup`.
+
+It also deleted evidence in English. Measured against a 20,000-commit
+Android repository: for one target line, the commit `git blame` reported
+touched 310 files with a PR-shaped subject, so the old N10 rule discarded it
+from `introduction_candidates` entirely. Its diff on the target file removed
+6 lines and added 18. It wrote the line being asked about, and was dropped
+on the shape of its subject.
+
+- `noise.py` now separates **signals** from **hints**. Signals are computed
+  from the diff, the file paths, the parent count and per-file churn, and
+  they alone set `is_noise` and remove a candidate. Hints are vocabulary
+  matches on the subject; they are reported in the tracer's JSON as
+  `noise.hints` and filter nothing. N1, N2, N5, N6, N7 and N9 keep a
+  filtering signal; N3, N8, N10, N11 and the vocabulary halves of N1, N5
+  and N7 become hints.
+- New signal, `noise.is_cosmetic` over `gitq.diff_lines`: normalize quote
+  characters, spacing and trailing commas or semicolons, then compare
+  removed and added lines pairwise in order. This is what replaced the
+  formatter vocabulary, and it covers the token-level formatter `blame -w`
+  cannot see through in any language, with no commit message at all. It
+  deliberately refuses two things a laxer check would accept: reordered
+  statements (identical multiset of lines, different behavior) and an empty
+  diff (no evidence must never read as evidence of debris).
+- New signal for a pure rename, from git's own `old => new` notation in
+  `--numstat` with zero line churn. No extra invocation: `gitq.Commit`
+  gained a `churn` field parsed from the `--numstat` output `commit_meta`
+  already fetched and discarded.
+- `gitq.diff_lines` is the first call in this project to render a diff body.
+  It is scoped to the path under investigation, which is both cheaper and
+  more precise (a repo-wide sweep that also changed real logic elsewhere is
+  not debris for *this* file), passes `--no-ext-diff` explicitly on top of
+  the `-c diff.external=` every invocation already carries, and returns
+  empty for a diff over 400KB, which callers must treat as unknown.
+- `SKILL.md` gains rule 7: read every candidate's subject yourself, in
+  whatever language it is written, and treat `hints` as claims rather than
+  findings. The model in this pipeline reads every language; a regex reads
+  one.
+- Measured cost of the trade, same repository: about 8% more wall time
+  (20.4s to 22.0s, 28.4s to 32.8s on the queries benchmarked) and 2 to 10
+  more candidates per query. One query moved from 198 candidates to 200,
+  which is the cap, so the disclosure rule now fires there where it did
+  not before. Leaving debris costs the agent one extra read; discarding the
+  real introducing commit cannot be recovered downstream.
+- F4's squash commit now reaches the candidate list carrying the PR-title
+  hint, instead of being filtered and needing an agent to disbelieve the
+  filter to find it. That closes the blind spot `CREATION-LOG.md` recorded
+  from a pressure re-run, where two runs against this fixture reached
+  different answers by defensible routes and the one that ignored the
+  filter was the more useful.
+- Every candidate now carries its commit `body` alongside the subject, in
+  both `introduction_candidates` and `blame_candidates`. The subject is
+  where filtering stopped looking; the body is where intent usually lives,
+  and `fix: guard charge` grades nothing while its body naming the incident
+  grades `danger`. `gitq.commit_meta` already read it, so this costs no git
+  call. Capped at 600 characters with `body_truncated` set when cut, because
+  bodies are unbounded upstream (measured on the same repository: median 280
+  characters, maximum 3,725) and a capped trace holds 200 candidates. An
+  agent that believed it had read a whole message would stop looking, so the
+  cut is disclosed rather than silent.
+- Tests: `tests/test_noise_language_independence.py` builds the same
+  repository six ways (English, Korean, Japanese, German, no convention,
+  near-empty subject) and pins one verdict across all of them, end to end
+  through `trace()`. `tests/test_noise.py` gains `TestCosmeticNormalization`
+  for the normalizer's edges and rewrites every keyword-category test as a
+  hint test. `tests/test_candidate_body.py` pins the body field and its
+  truncation disclosure. 312 tests pass, 15 of them red before this change.
+
 ## 0.6.1 - 2026-08-13
 
 Correctness fix, found while capturing the README's own hero screenshot.

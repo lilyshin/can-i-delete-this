@@ -2,12 +2,41 @@
 filtered. See noise-catalog.md for the catalog this implements.
 
 Pure functions only. This module never touches git.
+
+**A commit is filtered on what it changed, never on how its author
+described it.** A subject line is a description of a change, written in
+whatever language its author speaks, under whatever convention (or none)
+their repository follows. Reading it to decide whether a commit is debris
+made this classifier work in English and fail in every other language, and
+fail again in any repository that does not write `chore:` prefixes. Worse,
+it filtered in the dangerous direction: `refactor: extract net helpers`
+across twenty files was discarded on the word "extract" alone, and if that
+commit was the real introduction, nothing downstream could recover it.
+
+So the split here is:
+
+- **Signals** are computed from the diff, the paths, and the commit graph.
+  Only these set `is_noise`, and only these remove a candidate.
+- **Hints** are vocabulary matches on the subject. They are reported for
+  the agent to weigh (it reads every subject itself, in any language) and
+  they never filter anything.
+
+The asymmetry that decides every close call: leaving debris in the
+candidate list costs the agent one extra read, while discarding the real
+introducing commit is unrecoverable.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 BREADTH_THRESHOLD = 20
+
+# Per-file churn at or below this, across a commit wider than
+# BREADTH_THRESHOLD, is the shape of a mechanical sweep (one or two lines
+# rewritten the same way everywhere). It is reported as a hint and never
+# filters: a security fix applied to twenty-five call sites has exactly
+# this shape too, and that commit is the answer, not debris.
+SWEEP_CHURN_PER_FILE = 2.0
 
 _FORMATTER = re.compile(
     r"\b(fmt|format|formatting|formatter|prettier|lint|linting|style|styling"
@@ -20,10 +49,27 @@ _TYPO = re.compile(r"\b(typo|typos|comment|comments|wording|spelling|docs?)\b", 
 _MOVE = re.compile(r"\b(move|moved|relocate|reorganiz|restructur|rename|extract)\b", re.I)
 _SQUASH_PR = re.compile(r"\(#\d+\)\s*$")
 
+_HINT_PATTERNS = (
+    (_FORMATTER, "subject matches formatter vocabulary (English)"),
+    (_LICENSE, "subject mentions license or header (English)"),
+    (_IMPORTS, "subject mentions imports (English)"),
+    (_GENERATED, "subject mentions generated code (English)"),
+    (_MOVE, "subject mentions move or rename (English)"),
+    (_UPGRADE, "subject mentions upgrade or migration (English)"),
+    (_TYPO, "subject mentions typo, comment or docs (English)"),
+)
+
 _VENDOR_DIRS = ("vendor/", "third_party/", "thirdparty/", "node_modules/",
                 "Pods/", "external/", "deps/")
 _GENERATED_HINTS = ("_pb2.py", ".pb.go", "_generated.", ".gen.", "generated/",
                     ".g.dart", "_pb.js")
+
+# Quote characters unified by every formatter that rewrites tokens rather
+# than whitespace, which is the class `git blame -w` cannot see through
+# and this project exists for.
+_QUOTES = str.maketrans({"'": "\x00", '"': "\x00", "`": "\x00"})
+_TRAILING_PUNCT = re.compile(r"[,;]+\s*$")
+_WS_RUN = re.compile(r"\s+")
 
 
 @dataclass(frozen=True)
@@ -32,6 +78,9 @@ class NoiseVerdict:
     category: str
     confidence: float
     signals: tuple
+    # Vocabulary observations. Never filter; carried so the agent (which
+    # reads subjects in any language) can weigh them alongside the diff.
+    hints: tuple = field(default=())
 
 
 def _all_paths_match(paths, needles):
@@ -40,97 +89,156 @@ def _all_paths_match(paths, needles):
     return all(any(n in p for n in needles) for p in paths)
 
 
-def score(commit, *, whitespace_only, paths, import_ratio=0.0):
+def normalize_code_line(line):
+    """Strip the differences a formatter creates and a reader does not care
+    about: indentation and internal spacing, quote character, and trailing
+    commas or semicolons.
+
+    Deliberately not a parser. It equates `x = 'a'` with `x = "a"` and
+    leaves `x = 'a'` distinct from `x = 'b'`, which is the whole judgement
+    being made.
+    """
+    s = line.translate(_QUOTES)
+    s = _WS_RUN.sub(" ", s).strip()
+    return _TRAILING_PUNCT.sub("", s)
+
+
+def is_cosmetic(removed, added):
+    """True when every changed line is the same line with its formatting
+    rewritten.
+
+    Pairwise and in order, not as two sets: reordering statements leaves
+    the multiset of lines identical while changing what the code does, so
+    a set comparison would call a reordering cosmetic and discard it. An
+    unequal number of removed and added lines is never cosmetic either,
+    since something was genuinely added or deleted.
+
+    An empty diff returns False. Nothing was observed, and "no evidence"
+    must not read as "evidence of debris".
+    """
+    if not removed or len(removed) != len(added):
+        return False
+    norm_removed = [normalize_code_line(x) for x in removed]
+    norm_added = [normalize_code_line(x) for x in added]
+    if norm_removed == norm_added:
+        # Identical after normalization, and something differed before it,
+        # or git would not have reported these lines at all.
+        return any(r != a for r, a in zip(removed, added))
+    return False
+
+
+def _rename_shape(commit):
+    """True when git reported every changed path as a rename or copy and
+    no line content changed: a pure move.
+
+    `" => "` is git's own rename notation in `--numstat` output, so this
+    needs no extra invocation and no vocabulary.
+    """
+    if not commit.churn:
+        return False
+    renamed = 0
+    for added, removed, path in commit.churn:
+        if " => " not in path:
+            return False
+        if added or removed:
+            return False
+        renamed += 1
+    return renamed > 0
+
+
+def _sweep_shape(commit):
+    """The shape of a mechanical broad edit: wide, and shallow in every
+    file it touches."""
+    if commit.files_changed < BREADTH_THRESHOLD or not commit.churn:
+        return False
+    per_file = []
+    for added, removed, _ in commit.churn:
+        if added is None or removed is None:
+            return False  # binary file; no line churn to reason about
+        per_file.append(added + removed)
+    if not per_file:
+        return False
+    return sum(per_file) / float(len(per_file)) <= SWEEP_CHURN_PER_FILE * 2
+
+
+def score(commit, *, whitespace_only, paths, import_ratio=0.0,
+          diff_lines=None):
+    """Classify one commit.
+
+    `diff_lines` is an optional `(removed, added)` pair from
+    `gitq.diff_lines`, scoped to the path under investigation. When it is
+    absent, the cosmetic check is simply not run; its absence never
+    counts as evidence either way.
+    """
     signals = []
+    hints = []
     category = ""
     confidence = 0.0
 
-    # Stage 1: Structural signals (high confidence, standalone classification)
-    # Collect all signals; set category only once (never override).
+    def claim(cat, conf):
+        nonlocal category, confidence
+        if category == "":
+            category = cat
+            confidence = conf
+
+    # Evidence: the commit graph, the paths, the diff. No text is read
+    # below, so every one of these behaves identically whatever language
+    # the commit message is written in, or whether it has one at all.
 
     if commit.parents_count > 1:
         signals.append("merge commit (parents={})".format(commit.parents_count))
-        if category == "":
-            category = "N9"
-            confidence = 0.95
+        claim("N9", 0.95)
 
     if _all_paths_match(paths, _VENDOR_DIRS):
         signals.append("all paths vendored")
-        if category == "":
-            category = "N6"
-            confidence = 0.95
+        claim("N6", 0.95)
 
     if _all_paths_match(paths, _GENERATED_HINTS):
         signals.append("all paths look generated")
-        if category == "":
-            category = "N7"
-            confidence = 0.95
+        claim("N7", 0.95)
 
     if whitespace_only:
         signals.append("diff is empty when whitespace is ignored")
-        if category == "":
-            category = "N1"
-            confidence = 0.95
+        claim("N1", 0.95)
+
+    if diff_lines and is_cosmetic(diff_lines[0], diff_lines[1]):
+        signals.append(
+            "every changed line is identical once quotes, spacing and "
+            "trailing punctuation are normalized")
+        claim("N1", 0.9)
 
     if import_ratio >= 0.8:
         signals.append("changes concentrated in import block")
-        if category == "":
-            category = "N2"
-            confidence = 0.95
+        claim("N2", 0.95)
 
-    # Stage 2: Keywords (lower confidence, require breadth threshold)
-    # Only claim category if stage 1 didn't, but collect all signals regardless.
-
-    if commit.files_changed >= BREADTH_THRESHOLD:
-        if _FORMATTER.search(commit.subject):
-            signals.append("subject matches formatter vocabulary")
-            if category == "":
-                category = "N1"
-                confidence = 0.65
-
-        if _LICENSE.search(commit.subject):
-            signals.append("subject mentions license or header")
-            if category == "":
-                category = "N3"
-                confidence = 0.65
-
-        if _IMPORTS.search(commit.subject):
-            signals.append("subject mentions imports")
-            if category == "":
-                category = "N2"
-                confidence = 0.65
-
-        if _GENERATED.search(commit.subject):
-            signals.append("subject mentions generated code")
-            if category == "":
-                category = "N7"
-                confidence = 0.65
-
-        if _MOVE.search(commit.subject):
-            signals.append("subject mentions move or rename")
-            if category == "":
-                category = "N5"
-                confidence = 0.65
-
-        if _UPGRADE.search(commit.subject):
-            signals.append("subject mentions upgrade or migration")
-            if category == "":
-                category = "N8"
-                confidence = 0.65
-
-        if _TYPO.search(commit.subject):
-            signals.append("subject mentions typo, comment or docs")
-            if category == "":
-                category = "N11"
-                confidence = 0.65
-
-        if _SQUASH_PR.search(commit.subject):
-            signals.append("PR-title shaped subject over many files")
-            if category == "":
-                category = "N10"
-                confidence = 0.65
+    if _rename_shape(commit):
+        signals.append("git reports every path renamed with no line changes")
+        claim("N5", 0.9)
 
     is_noise = category != ""
     if not is_noise:
         confidence = 0.0
-    return NoiseVerdict(is_noise, category, confidence, tuple(signals))
+
+    # Hints: read the subject, decide nothing. A hint may corroborate a
+    # signal for a reader, and on its own it is just a claim the commit
+    # makes about itself.
+
+    if _sweep_shape(commit):
+        hints.append("wide and shallow: {} files, {:.1f} lines changed per "
+                     "file on average".format(
+                         commit.files_changed,
+                         (commit.insertions + commit.deletions)
+                         / float(commit.files_changed)))
+
+    for pattern, label in _HINT_PATTERNS:
+        if pattern.search(commit.subject):
+            hints.append(label)
+
+    if _SQUASH_PR.search(commit.subject) and commit.files_changed >= BREADTH_THRESHOLD:
+        hints.append(
+            "PR-title shaped subject over {} files: the subject may name "
+            "the pull request rather than this change".format(
+                commit.files_changed))
+
+    return NoiseVerdict(is_noise, category, confidence, tuple(signals),
+                        tuple(hints))

@@ -58,9 +58,18 @@ def _commit(repo: Path, message: str, date: str) -> str:
     return _git(repo, "rev-parse", "HEAD")
 
 
-def build_f1(dest: str) -> dict:
+def build_f1(dest: str, *, noise_subject: str = "chore: apply formatter",
+             real_subject: str = "hotfix: prevent double charge (#4127)",
+             name: str = "f1") -> dict:
     """N1: a repo-wide formatter commit flips string-quote style, burying
     the real author of the target line.
+
+    `noise_subject`, `real_subject` and `name` exist so the identical
+    repository can be rebuilt with commit subjects in another language,
+    or with no recognizable vocabulary at all. The diff is what makes
+    this commit debris; the subject is a description of it that may be
+    absent, misleading, or in any human language. See
+    `tests/test_noise_language_independence.py`.
 
     `git blame -w` only ignores whitespace, so a formatter that merely
     reindents can be seen through by blame on its own, with nothing left
@@ -80,7 +89,7 @@ def build_f1(dest: str) -> dict:
     fixed historical date to age out of, and fixed dates keep this test
     deterministic across runs.
     """
-    repo = _init(dest, "f1")
+    repo = _init(dest, name)
     target = repo / "payment.py"
     extra_files = [repo / "file_{:02d}.py".format(i) for i in range(24)]
 
@@ -110,8 +119,7 @@ def build_f1(dest: str) -> dict:
         "        return {'status': 'duplicate'}\n"
         "    order.mark_processed()\n"
     )
-    real_sha = _commit(repo, "hotfix: prevent double charge (#4127)",
-                       "2019-11-08T02:14:00")
+    real_sha = _commit(repo, real_subject, "2019-11-08T02:14:00")
 
     # Noise: a repo-wide formatter flips single quotes to double quotes
     # across every file, including the target line. Token-level change,
@@ -124,7 +132,7 @@ def build_f1(dest: str) -> dict:
     )
     for f in extra_files:
         f.write_text('x = "value_{}"\n'.format(f.stem))
-    noise_sha = _commit(repo, "chore: apply formatter", "2023-06-01T09:00:00")
+    noise_sha = _commit(repo, noise_subject, "2023-06-01T09:00:00")
 
     return {
         "repo": str(repo),
@@ -885,3 +893,38 @@ def build_korean_paths(dest: str) -> dict:
         "real_sha": real_sha,
         "test_path": "tests/결제_확인.py",
     }
+
+
+def build_body_message(dest: str, *, body: str = None,
+                       name: str = "body_message") -> dict:
+    """A commit whose subject says almost nothing and whose body says why.
+
+    The common real shape, and the reason `trace.py` carries `body` for
+    every candidate: `fix: guard charge` tells an agent nothing it can
+    grade, while the body names the incident. Used by
+    tests/test_candidate_body.py, including with an oversized `body` to
+    pin the truncation disclosure.
+    """
+    if body is None:
+        body = ("Customers were charged twice when the webhook was delivered "
+                "more than once. Adding an early return on an already "
+                "processed order.\n\nRefs #4127")
+    repo = _init(dest, name)
+    target = repo / "payment.py"
+
+    target.write_text("def charge(order):\n    order.mark_processed()\n")
+    _commit(repo, "feat: add charge", "2019-01-05T10:00:00")
+
+    target.write_text(
+        "def charge(order):\n"
+        "    if order.already_charged:\n"
+        "        return {'status': 'duplicate'}\n"
+        "    order.mark_processed()\n"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "fix: guard charge", "-m", body,
+         date="2019-11-08T02:14:00")
+    real_sha = _git(repo, "rev-parse", "HEAD")
+
+    return {"repo": str(repo), "path": "payment.py", "line": 3,
+            "real_sha": real_sha, "body": body}

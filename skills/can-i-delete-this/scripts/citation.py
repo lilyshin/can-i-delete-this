@@ -45,12 +45,13 @@ The cited commit can live in either of trace.py's two candidate lists:
 - blame_candidates: everything plain `git blame` pointed at, noise or not.
   Thinner shape (sha, subject, date, author, noise).
 
-A squash commit that noise.py correctly flags (N10 is the common case) is
+A commit that noise.py filters on a structural signal (a hand-resolved
+merge, N9, is the common case since 0.7.0 retired subject-based filtering) is
 filtered OUT of introduction_candidates entirely -- see trace.py's `add()`,
 which returns early on `v.is_noise` before a commit ever reaches that list.
-SKILL.md's workflow and noise-catalog.md's N10 entry both then instruct the
+SKILL.md's workflow and noise-catalog.md both then instruct the
 agent to read that noise-flagged commit's own diff and cite it anyway when
-the diff is what actually added the target lines: N10 distrust is about
+the diff is what actually added the target lines: the filter's distrust is about
 the commit's *message*, not its *diff*. When an agent follows that
 instruction, the cited sha exists only in blame_candidates. Refusing to
 look there would make render.py and artifacts.py contradict the very

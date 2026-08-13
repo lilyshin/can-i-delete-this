@@ -187,9 +187,10 @@ def _top(trace_data, real_refs, all_refs):
       citation.find_cited in either introduction_candidates or
       blame_candidates. See citation.py for why the cited commit is not
       guaranteed to be in the first list: noise filtering can remove the
-      real commit from introduction_candidates entirely (the N10 squash
-      case is the common one), and SKILL.md's workflow then has the agent
-      cite it out of blame_candidates anyway, after reading its diff.
+      real commit from introduction_candidates entirely (a merge, or a
+      commit-wide cosmetic rewrite that still carried one real edit to
+      this file), and SKILL.md's workflow then has the agent cite it out
+      of blame_candidates anyway, after reading its diff.
     - "unresolved": `real_refs` is non-empty, but it names no commit in
       either list. verdict.py's schema only checks that a ref is a
       non-empty string, not that it names a real commit in this trace, so

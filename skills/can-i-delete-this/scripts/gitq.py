@@ -120,6 +120,14 @@ class Commit:
     files_changed: int
     insertions: int
     deletions: int
+    # Per-file churn as (added, removed, path), parsed from the same
+    # `--numstat` output `commit_meta` already reads for the totals above,
+    # so carrying it costs no extra git call. `added`/`removed` are None
+    # for binary files (git prints "-"). A path containing " => " is git's
+    # own rename/copy notation, which is why rename detection downstream
+    # needs no separate invocation either. Defaulted so a Commit built by
+    # hand (tests, `--include-commit`) stays valid without it.
+    churn: tuple = ()
 
 
 def run_git(repo, args, ok_returncodes=(0,)):
@@ -155,20 +163,25 @@ def commit_meta(repo, sha):
     raw = run_git(repo, ["show", "-s", "--format=" + _FMT, sha]).rstrip("\n")
     sha_, an, ae, date, subject, parents, body = raw.split(_SEP, 6)
     added, removed, files = 0, 0, 0
+    churn = []
     numstat = run_git(repo, ["show", "--first-parent", "--numstat", "--format=", sha])
     for line in numstat.splitlines():
         parts = line.split("\t")
         if len(parts) != 3:
             continue
         files += 1
-        if parts[0].isdigit():
-            added += int(parts[0])
-        if parts[1].isdigit():
-            removed += int(parts[1])
+        a = int(parts[0]) if parts[0].isdigit() else None
+        r = int(parts[1]) if parts[1].isdigit() else None
+        if a is not None:
+            added += a
+        if r is not None:
+            removed += r
+        churn.append((a, r, parts[2]))
     return Commit(
         sha=sha_, author=an, author_email=ae, date=date, subject=subject,
         body=body.strip(), parents_count=len(parents.split()) if parents else 0,
         files_changed=files, insertions=added, deletions=removed,
+        churn=tuple(churn),
     )
 
 
@@ -294,6 +307,47 @@ def grep_match_file_count(repo, token):
     """
     out = run_git(repo, ["grep", "-l", "-F", "-e", token], ok_returncodes=(0, 1))
     return len([line for line in out.splitlines() if line.strip()])
+
+
+def diff_lines(repo, sha, path=None, max_bytes=400000):
+    """The removed and added lines of `sha`, in file order, as two lists.
+
+    Scoped to `path` when given, which is both cheaper and more precise:
+    the question a caller is answering is "is this commit debris *for the
+    lines I am looking at*", and a repo-wide sweep that also changes real
+    logic somewhere else is not debris for this file. Judging the whole
+    commit would answer a question nobody asked and pay for the entire
+    diff to do it.
+
+    This is the only call in this module that renders a diff body, so it
+    passes `--no-ext-diff` explicitly on top of the `-c diff.external=`
+    every invocation already carries (belt and braces: the config half is
+    forced globally, the flag half is stated here so this call cannot
+    silently start honoring an external differ if that config forcing is
+    ever relaxed).
+
+    Returns ([], []) when the diff exceeds `max_bytes`, which callers
+    must treat as "unknown", never as "no change": a caller that filters
+    on emptiness would otherwise discard commits for being large.
+    """
+    args = ["show", "--no-ext-diff", "-U0", "--format=", sha]
+    if path:
+        args += ["--", path]
+    try:
+        out = run_git(repo, args)
+    except RuntimeError:
+        return [], []
+    if len(out) > max_bytes:
+        return [], []
+    removed, added = [], []
+    for line in out.splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("-"):
+            removed.append(line[1:])
+        elif line.startswith("+"):
+            added.append(line[1:])
+    return removed, added
 
 
 def is_whitespace_only(repo, sha):

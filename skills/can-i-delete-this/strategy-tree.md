@@ -129,11 +129,12 @@ absence; move on to intent recovery.
 
 `introduction_candidates` empty does not automatically mean `unknown`. Check
 whether every entry in `blame_candidates` was filtered out only because it
-scored as noise, most often N10 (a squash commit shaped like a PR title). A
-squash commit is untrustworthy by its *message*, not its *diff*: it is
-excluded from `introduction_candidates` because its subject cannot be
-trusted to describe intent, not because its content is unrelated to the
-target line.
+scored as noise: a merge commit (N9), a cosmetic rewrite of the whole commit
+(N1), a vendored or generated dump (N6, N7). Since 0.7.0 a subject alone
+never causes this, so a filtered commit is one whose *change* looked like
+debris commit-wide, which is a different fact from "its diff is unrelated to
+the target line". A merge that resolved a conflict by hand, or a sweep that
+also fixed one real thing in this file, both land here.
 
 ```
 git show <sha> -- <path>
@@ -141,11 +142,11 @@ git show <sha> -- <path>
 
 If that diff is what actually introduced the target lines, it is the real
 introducing commit, and you may cite it as evidence even though `noise.py`
-flagged it. This is the one place a human reading a diff outperforms the
-tracer's own scoring: the tracer cannot tell "this commit's message hides a
-real change" apart from "this commit's message accurately describes noise",
-so it treats both the same way, conservatively. Reading the diff can tell
-the difference.
+flagged it. This is the one place reading a diff outperforms the tracer's own
+scoring: the tracer judges the commit as a whole, and cannot tell "wide
+mechanical change that also carried one real edit here" apart from "wide
+mechanical change", so it treats both the same way, conservatively. Reading
+the diff for this path can tell the difference.
 
 **Comes up empty (the noise commit's diff really is unrelated to the target
 lines):** this is a genuine `unknown`. Do not manufacture a commit reference
