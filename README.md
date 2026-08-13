@@ -304,7 +304,7 @@ account of what this means for `introduction_candidates` in practice.
 MIT. See `LICENSE`.
 
 <details>
-<summary>한국어 요약</summary>
+<summary>🇰🇷 한국어로 읽기</summary>
 
 `git blame`은 "누가 마지막으로 이 줄을 건드렸나"를 답하는데, 정작 필요한
 질문은 "이 줄이 왜 존재하나"입니다. 포맷터 일괄 적용, rename, 코드 이동,

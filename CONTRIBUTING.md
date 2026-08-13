@@ -74,11 +74,11 @@ Do not add a rule for a failure mode you have not observed; see
 - **Shipped documentation stays in English**: `SKILL.md` is read by an
   agent on every invocation and the reference docs alongside it serve the
   same audience, so the files this project ships keep one language. The
-  exceptions that already exist stay: README.md's "한국어 요약" block and
-  the verbatim quotes preserved in `tests/pressure/`.
+  exceptions that already exist stay: README.md's "🇰🇷 한국어로 읽기" block
+  and the verbatim quotes preserved in `tests/pressure/`.
 - **Everything you submit can be in Korean or English, whichever you
   write faster.** Issues, PR descriptions, review comments, commit
-  messages: 한국어로 쓰셔도 됩니다. 오히려 좋습니다 (the maintainer reads
-  Korean first). The existing commit history uses English subjects with
+  messages: 🇰🇷 한국어로 쓰셔도 됩니다. 오히려 좋습니다 (the maintainer
+  reads Korean first). The existing commit history uses English subjects with
   Korean bodies; matching that is appreciated but a fully Korean commit
   message will not get a PR rejected.

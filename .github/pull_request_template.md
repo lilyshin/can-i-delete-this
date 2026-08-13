@@ -1,4 +1,4 @@
-<!-- 한국어로 작성하셔도 됩니다. Korean or English both welcome. -->
+<!-- 🇰🇷 한국어로 작성하셔도 됩니다. Korean or English both welcome. -->
 
 **What does this change?**
 

@@ -4,7 +4,7 @@ about: Something in trace.py, noise.py, verdict.py, render.py or artifacts.py be
 labels: bug
 ---
 
-<!-- 한국어로 작성하셔도 됩니다. Korean or English both welcome. -->
+<!-- 🇰🇷 한국어로 작성하셔도 됩니다. Korean or English both welcome. -->
 
 **What did you run?**
 
