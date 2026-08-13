@@ -847,7 +847,10 @@ def _repro_html(trace_data, verdict_data, lang):
         if isinstance(c, dict) and c.get("args")
     ]
 
-    commit_refs = citation.commit_refs(verdict_data.get("evidence"))
+    # real_introduction_refs, not commit_refs: a `superseded`/`reference`/
+    # etc-tagged citation is not the commit this section's `git show`
+    # entries are meant to reproduce (see citation.py's module docstring).
+    commit_refs = citation.real_introduction_refs(verdict_data.get("evidence"))
     real_shas = citation.real_shas(trace_data, commit_refs)
     for sha in sorted(real_shas):
         lines.append(_cmd_line(repo, ["show", sha]))
@@ -1032,7 +1035,15 @@ def render(trace_data, verdict_data, *, lang="en"):
     # cited commit is not guaranteed to be in the first list at all -- see
     # this module's docstring and citation.py's for the N10 case where it
     # is not.
-    commit_refs = citation.commit_refs(verdict_data.get("evidence"))
+    #
+    # real_introduction_refs, not commit_refs: an evidence item tagged
+    # `role: "superseded"`/`"reference"`/`"guard"`/`"risk"` is cited
+    # evidence (it still appears in the Evidence list below, and in the
+    # arc/isolation/risk blocks above when its role calls for that), but it
+    # is not the real introduction, and must not get this bold tag. Only
+    # `role: "introduced"` or no role at all qualifies -- see citation.py's
+    # module docstring for the rule.
+    commit_refs = citation.real_introduction_refs(verdict_data.get("evidence"))
     real_shas = citation.real_shas(trace_data, commit_refs)
     blame_by_sha = {b.get("sha"): b for b in trace_data.get("blame_candidates", [])}
 

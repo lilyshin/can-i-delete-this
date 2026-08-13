@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.6.1 - 2026-08-13
+
+Correctness fix, found while capturing the README's own hero screenshot.
+0.5.0 added an optional `role` field to evidence items, but citation.py's
+matching -- which decides render.py's bold "real introduction" tag and
+artifacts.py's "// KEEP:" attribution -- never learned about it. Every
+cited commit was marked the real introduction regardless of role,
+including a `role: "reference"` citation naming the formatter commit that
+`git blame` reports: the very thing this project exists to tell you is
+not the answer, rendered as if it were.
+
+- `citation.py` gains `real_introduction_refs`, alongside the existing
+  `commit_refs`: a commit counts as the real introduction only when its
+  evidence item has `role: "introduced"` or no role at all (a verdict
+  written before roles existed keeps rendering exactly as it always did).
+  Every other role -- `superseded`, `reference`, `guard`, `risk` -- is
+  still real, cited evidence (still in the Evidence list, and in the
+  arc/isolation/risk blocks when its role calls for that), but never the
+  bold real-introduction tag.
+- `render.py`'s two call sites (the timeline's real-row tagging and the
+  reproduction commands section) now resolve "real" through
+  `real_introduction_refs` instead of the unfiltered `commit_refs`.
+- `artifacts.py`'s `_top()` had the same bug: it could name a
+  `reference`-tagged commit in the "// KEEP:" line. It now resolves
+  through `real_introduction_refs` too, and gains a "not_introduction"
+  status for the case where a verdict cites commits but none of them is
+  tagged as the real introduction -- falling back to
+  `introduction_candidates[0]` there would be the same M2 misattribution
+  the existing "unresolved" status already guards against, so the
+  artifact now says plainly that nothing resolves, instead of guessing.
+- New tests in `tests/test_citation_roles.py`: the exact reproduction
+  (`introduced` + `reference`, only one real row), `superseded`/`risk`
+  roles likewise excluded, a roleless item still marked real, the
+  artifact naming the `introduced` commit even when a `reference` item is
+  listed first, and a verdict citing only non-`introduced` roles
+  degrading honestly rather than silently picking a candidate.
+
 ## 0.6.0 - 2026-08-12
 
 Until now the skill had exactly one entry point: phrasing a natural-language

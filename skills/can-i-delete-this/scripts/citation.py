@@ -8,6 +8,36 @@ same question -- "which candidate does verdict['evidence'] cite as the
 introducing commit, and where is it" -- so the matching logic lives here
 once instead of twice.
 
+Not every commit-type evidence item is that answer, though. verdict.py's
+`EVIDENCE_ROLES` (0.5.0) lets an evidence item say what kind of argument it
+is, and only one kind is the real introduction:
+
+- `role: "introduced"` -- this is the commit that added the code. Real.
+- no `role` at all -- the same thing, under the schema as it existed before
+  roles did. A verdict written before 0.5.0 (or by a caller that still
+  omits `role`) must keep rendering exactly as it always did, so an absent
+  role is treated the same as `"introduced"`, not as "unknown, therefore
+  not real".
+- `role: "superseded"` -- the commit that retired the reason the code
+  existed. A real, useful fact (render.py's lifetime arc renders it), but
+  a different fact from "this is where the code came from".
+- `role: "reference"` -- something that still mentions the code (a
+  comment, a doc) without being either end of its lifetime.
+- `role: "guard"` / `role: "risk"` -- a test that protects the code, or a
+  residual hazard; neither is a claim about origin at all.
+
+`commit_refs` below returns every cited commit ref regardless of role, for
+callers that need to know a citation was made at all (artifacts.py's
+unresolved-citation message names the ref even when it turns out not to be
+the real introduction). `real_introduction_refs` is the narrower, role-aware
+filter: only refs from `introduced`-or-roleless items pass. Both render.py
+and artifacts.py must resolve "the real introduction" through
+`real_introduction_refs`, never through raw `commit_refs`, or a `reference`-
+or `superseded`-tagged citation gets the same bold "real introduction"
+treatment as the commit that actually did it -- which is the exact 0.5.0
+regression this module docstring update is here to prevent a future reader
+from re-introducing.
+
 The cited commit can live in either of trace.py's two candidate lists:
 
 - introduction_candidates: survived noise filtering. Richer shape (why,
@@ -43,11 +73,47 @@ change.
 """
 
 
+# Roles (see verdict.py's EVIDENCE_ROLES) whose commit ref counts as the
+# real introduction. `None` stands for "no role key at all", not the
+# string "None" -- see real_introduction_refs below.
+_REAL_INTRODUCTION_ROLES = (None, "introduced")
+
+
 def commit_refs(evidence):
-    """Lowercased, non-empty commit refs cited as evidence in a verdict."""
+    """Lowercased, non-empty commit refs cited as evidence in a verdict.
+
+    Every commit-type item counts here regardless of `role`. Use this when
+    the question is "was a commit cited at all" (e.g. to report that a
+    citation existed even though it did not resolve to the real
+    introduction). For "which commit is the real introduction", use
+    `real_introduction_refs` instead -- see the module docstring.
+    """
     refs = []
     for item in evidence or []:
         if not isinstance(item, dict) or item.get("type") != "commit":
+            continue
+        ref = item.get("ref")
+        if isinstance(ref, str) and ref.strip():
+            refs.append(ref.strip().lower())
+    return refs
+
+
+def real_introduction_refs(evidence):
+    """Lowercased, non-empty commit refs cited as the real introduction.
+
+    A commit-type evidence item counts only when its `role` is
+    `"introduced"` or absent entirely (see the module docstring for why
+    "absent" counts: verdicts written before roles existed must keep
+    rendering unchanged). Every other role -- `superseded`, `reference`,
+    `guard`, `risk` -- is real, resolvable evidence, just not evidence of
+    origin, so its ref is excluded here even though `commit_refs` above
+    would include it.
+    """
+    refs = []
+    for item in evidence or []:
+        if not isinstance(item, dict) or item.get("type") != "commit":
+            continue
+        if item.get("role") not in _REAL_INTRODUCTION_ROLES:
             continue
         ref = item.get("ref")
         if isinstance(ref, str) and ref.strip():

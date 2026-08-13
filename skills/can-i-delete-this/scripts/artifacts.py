@@ -53,6 +53,9 @@ _STRINGS = {
         "unresolved.warning": "This attribution could not be verified. Do not treat "
             "this grade as confirmed; re-run the trace or check the citation by "
             "hand before acting on it.",
+        "not_introduction.cited": "The verdict's evidence cites {cited}, but none of "
+            "it is tagged as the real introduction (role: introduced, or no role at "
+            "all). This trace has nothing to attribute this artifact to.",
 
         "danger.keep": "// KEEP: {subject} ({day}, {sha})",
         "danger.guard": "// Before deleting, confirm {guard} still passes.",
@@ -99,6 +102,9 @@ _STRINGS = {
         "unresolved.warning": "이 귀속(attribution)은 검증되지 않았습니다. 이 등급을 "
             "확정된 것으로 보지 말고, trace를 다시 돌리거나 인용을 직접 확인한 뒤 "
             "판단하세요.",
+        "not_introduction.cited": "검증(verdict)의 근거가 {cited}을 인용했지만, 그중 "
+            "어느 것도 실제 도입(role: introduced 또는 role 없음)으로 표시되어 있지 "
+            "않습니다. 이 trace에는 이 결과물의 근거로 삼을 대상이 없습니다.",
 
         "danger.keep": "// 유지: {subject} ({day}, {sha})",
         "danger.guard": "// 삭제하기 전에 {guard}가 통과하는지 확인하세요.",
@@ -163,27 +169,44 @@ def _t(lang, key, **kwargs):
     return template.format(**kwargs) if kwargs else template
 
 
-def _top(trace_data, refs):
+def _top(trace_data, real_refs, all_refs):
     """Pick the candidate the artifact should describe, and how it was found.
+
+    `real_refs` is `citation.real_introduction_refs(evidence)`: commit refs
+    tagged `role: "introduced"` or carrying no role at all (see citation.py's
+    module docstring). `all_refs` is `citation.commit_refs(evidence)`: every
+    cited commit ref regardless of role. The two are equal for a verdict
+    that never uses roles at all, or that only cites `introduced`/roleless
+    commits; they diverge exactly when a verdict cites commits under roles
+    like `"superseded"` or `"reference"` and nothing tagged `"introduced"` --
+    the "not_introduction" status below exists for that case.
 
     Returns (candidate, status):
 
-    - "cited": `candidate` is what the verdict's evidence cites, found by
+    - "cited": `candidate` is what `real_refs` cites, found by
       citation.find_cited in either introduction_candidates or
       blame_candidates. See citation.py for why the cited commit is not
       guaranteed to be in the first list: noise filtering can remove the
       real commit from introduction_candidates entirely (the N10 squash
       case is the common one), and SKILL.md's workflow then has the agent
       cite it out of blame_candidates anyway, after reading its diff.
-    - "unresolved": the verdict cited a commit (`refs` is non-empty), but
-      it names no commit in either list. verdict.py's schema only checks
-      that a ref is a non-empty string, not that it names a real commit in
-      this trace, so a stale or mistyped ref reaches here as a citation
-      that resolves to nothing. `candidate` is {}. Substituting some other
-      candidate here would be exactly the M2 misattribution this function
-      exists to prevent, so callers must say the citation did not resolve,
-      not guess a replacement.
-    - "fallback": no citation was made at all (`refs` is empty).
+    - "unresolved": `real_refs` is non-empty, but it names no commit in
+      either list. verdict.py's schema only checks that a ref is a
+      non-empty string, not that it names a real commit in this trace, so
+      a stale or mistyped ref reaches here as a citation that resolves to
+      nothing. `candidate` is {}. Substituting some other candidate here
+      would be exactly the M2 misattribution this function exists to
+      prevent, so callers must say the citation did not resolve, not guess
+      a replacement.
+    - "not_introduction": `real_refs` is empty but `all_refs` is not -- the
+      verdict cited one or more commits, just none of them tagged as the
+      real introduction (all were `superseded`/`reference`/`guard`/`risk`).
+      `candidate` is {}. Falling through to "fallback" below and silently
+      naming `introduction_candidates[0]` would be exactly the same M2
+      misattribution the "unresolved" case above already guards against,
+      just reached from a different direction, so this says so plainly
+      instead of guessing.
+    - "fallback": no citation was made at all (`all_refs` is empty too).
       introduction_candidates is sorted chronologically, oldest first, and
       the oldest entry is used for lack of anything better, same as before
       this function knew about verdicts. `candidate` is {} if
@@ -194,11 +217,13 @@ def _top(trace_data, refs):
       to" case, where "reason unknown" text is honest rather than evasive.
     """
     cands = trace_data.get("introduction_candidates") or []
-    if refs:
-        found, _source = citation.find_cited(trace_data, refs)
+    if real_refs:
+        found, _source = citation.find_cited(trace_data, real_refs)
         if found is not None:
             return found, "cited"
         return {}, "unresolved"
+    if all_refs:
+        return {}, "not_introduction"
     if cands:
         return cands[0], "fallback"
     return {}, "empty"
@@ -222,6 +247,33 @@ def _unresolved_citation_text(grade, target, refs, *, lang="en"):
         "{}: {}:{}".format(_t(lang, "label.target"), path, start),
         "",
         _t(lang, "unresolved.cited", cited=cited),
+        _t(lang, "unresolved.warning"),
+    ])
+
+
+def _not_introduction_text(grade, target, refs, *, lang="en"):
+    """Artifact text for a verdict whose evidence cites commits, but none
+    of them tagged as the real introduction (see citation.py's
+    `real_introduction_refs`: every item was `role: "superseded"`,
+    `"reference"`, `"guard"` or `"risk"`).
+
+    Unlike `_unresolved_citation_text`, the cited commit(s) here do exist
+    in this trace -- they are simply not what this artifact is meant to
+    name. Silently substituting `introduction_candidates[0]` here would be
+    the same M2 misattribution `_top`'s "unresolved" branch already
+    guards against, just reached from evidence that resolves instead of
+    evidence that doesn't, so this states the situation plainly instead
+    of guessing, the same way `_unresolved_citation_text` does.
+    """
+    unknown = _t(lang, "common.unknown")
+    path = target.get("path", unknown)
+    start = target.get("start", unknown)
+    cited = ", ".join(refs) if refs else unknown
+    return "\n".join([
+        "{}: {}".format(_t(lang, "label.grade"), grade),
+        "{}: {}:{}".format(_t(lang, "label.target"), path, start),
+        "",
+        _t(lang, "not_introduction.cited", cited=cited),
         _t(lang, "unresolved.warning"),
     ])
 
@@ -282,17 +334,30 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
     actually cites over the chronologically-oldest one; see `_top`'s
     docstring. It is optional and defaults to None so existing callers that
     have not been updated keep the previous (oldest-candidate) behavior.
+    Only a commit cited with `role: "introduced"` or no role at all can win
+    that preference (see citation.py's `real_introduction_refs`); a commit
+    cited under any other role never names this artifact's keep-comment or
+    checklist entry, even when it is the first or only commit in the list.
 
     `lang` selects the language of the chrome this function writes around
     the trace/verdict data (see the module docstring and `_STRINGS`);
     it defaults to `"en"` so existing callers keep the previous text.
     """
     target = trace_data.get("target", {})
-    refs = citation.commit_refs(evidence)
-    top, status = _top(trace_data, refs)
+    # real_refs is the narrower, role-aware set (citation.py's module
+    # docstring has the rule): only these can resolve to "cited" below.
+    # all_refs is every cited commit ref regardless of role, needed only
+    # to tell "nothing was cited" (fallback to the oldest candidate is
+    # honest there) apart from "something was cited, just not tagged as
+    # the real introduction" (fallback would silently misattribute there).
+    real_refs = citation.real_introduction_refs(evidence)
+    all_refs = citation.commit_refs(evidence)
+    top, status = _top(trace_data, real_refs, all_refs)
 
     if status == "unresolved":
-        return _unresolved_citation_text(grade, target, refs, lang=lang)
+        return _unresolved_citation_text(grade, target, real_refs, lang=lang)
+    if status == "not_introduction":
+        return _not_introduction_text(grade, target, all_refs, lang=lang)
 
     # Every field below is checked with isinstance() before use, not coerced
     # with str(). str(x) turns a missing/None date into "" or "None" and lets
