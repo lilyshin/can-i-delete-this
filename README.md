@@ -5,7 +5,7 @@ noise, renames, code moves and squashed history to the commit that actually
 introduced it, then grades whether it is safe to delete, with a commit
 reference behind every grade above `unknown`.
 
-![A dark-mode report: payment.py line 3 traced past a 2023 "chore: apply formatter" commit that git blame reports, to the real 2019 hotfix that introduced it, graded "Do not delete" with the introducing commit as evidence.](assets/hero.png)
+![A dark-mode report: session_guard.py line 4 graded "Do not delete". The timeline shows the "chore: apply formatter" commit git blame reports rendered plain, and the real introduction tag on the 2018 security fix buried 111 commits earlier, found via pickaxe.](assets/hero.png)
 
 ## The problem
 
