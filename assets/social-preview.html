@@ -1,0 +1,98 @@
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1280px; height: 640px; }
+  body {
+    background: #14161A;
+    color: #E8E9EA;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    padding: 62px 68px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .eyebrow {
+    font-size: 20px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #8B9096;
+  }
+  h1 {
+    font-size: 82px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-top: 16px;
+    line-height: 1;
+  }
+  .thesis {
+    font-size: 27px;
+    line-height: 1.5;
+    color: #B9BDC2;
+    margin-top: 22px;
+  }
+  .thesis b { color: #E8E9EA; font-weight: 700; }
+  .rows {
+    background: #1B1E23;
+    border: 1px solid #2A2E34;
+    border-radius: 10px;
+    padding: 22px 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 30px;
+  }
+  .row { display: flex; align-items: center; gap: 16px; font-size: 24px; white-space: nowrap; }
+  .date { color: #8B9096; font-variant-numeric: tabular-nums; }
+  .dot { font-size: 20px; color: #8B9096; }
+  .row.real { color: #E8E9EA; font-weight: 700; }
+  .row.real .dot { color: #F08A80; }
+  .row.dim { color: #8B9096; }
+  .tag {
+    background: #351916;
+    color: #F08A80;
+    border: 1px solid #5A2A24;
+    border-radius: 5px;
+    padding: 3px 10px;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+  }
+  .aside { color: #6E7378; font-size: 21px; font-weight: 400; }
+  footer {
+    display: flex;
+    gap: 30px;
+    font-size: 21px;
+    color: #6E7378;
+    border-top: 1px solid #2A2E34;
+    padding-top: 22px;
+  }
+</style>
+
+<div>
+  <div class="eyebrow">Claude Code skill</div>
+  <h1>can-i-delete-this</h1>
+  <p class="thesis">
+    <code>git blame</code> answers who touched a line last.<br>
+    This answers <b>why it exists</b>, with the commit that proves it.
+  </p>
+</div>
+
+<div class="rows">
+  <div class="row dim">
+    <span class="date">2018-05-06</span>
+    <span class="dot">&#9675;</span>
+    <span>chore: apply formatter</span>
+    <span class="aside">&larr; where git blame stops</span>
+  </div>
+  <div class="row real">
+    <span class="date">2018-01-15</span>
+    <span class="dot">&#9679;</span>
+    <span>fix: reject replayed session tokens (#5521)</span>
+    <span class="tag">REAL INTRODUCTION</span>
+  </div>
+</div>
+
+<footer>
+  <span>read-only git</span>
+  <span>zero dependencies</span>
+  <span>graded verdict + paste-ready next step</span>
+</footer>
