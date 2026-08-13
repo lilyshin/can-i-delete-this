@@ -20,12 +20,17 @@ only place that workflow is written, so it stays that way.
 - **A bare symbol or identifier** (no trailing `path:line`) — locate it with
   `grep -n` (use `Grep`/`Glob` first if the file isn't obvious from the
   name). If more than one match comes up, stop and list them; ask which one
-  is meant instead of guessing. Once you have exactly one file and
-  line/range, state it back before continuing: "Looking at `path:line` —
-  is that the target?" A wrong target here is the specific failure this
-  command exists to prevent: an agent once answered confidently about a
-  different line than the one it was asked about, and recommended deleting
-  it.
+  is meant instead of guessing. When the session spans more than one git
+  repository (extra working directories, sibling checkouts, a directory of
+  repos), the same rule applies one level up: if matches land in different
+  repositories, list them grouped by repository and ask which repository is
+  meant — do not assume the current working directory's repo just because
+  it is current. Once you have exactly one file and line/range, state it
+  back before continuing, with the repository named whenever more than one
+  was in play: "Looking at `path:line` in `<repo>` — is that the target?"
+  A wrong target here is the specific failure this command exists to
+  prevent: an agent once answered confidently about a different line than
+  the one it was asked about, and recommended deleting it.
 - **No argument** — do not guess. Ask the user which file/line/symbol to
   check, and stop there.
 

@@ -36,7 +36,31 @@ formatting (the quote-unification example above, trailing-comma insertion,
 line splitting) plus renames, code moves, squashed history and reverts,
 none of which whitespace-ignoring diff can see through.
 
-## The tracer always runs; history size decides how you read, not whether you report
+## The moments this is for
+
+Four situations, all of them the same question wearing different clothes:
+
+- **Reviewing a PR that deletes code.** Someone removed a guard clause
+  nobody on the team remembers adding. Approving means betting it was
+  debris; blocking means betting it was load-bearing. Neither bet
+  currently has evidence behind it.
+- **Dead-code cleanup.** A function nothing seems to call, a branch that
+  looks unreachable, a config flag whose consumers you cannot find. It
+  *looks* deletable, and "looks deletable" is exactly the confidence level
+  this tool exists to replace with a commit reference.
+- **`git blame` gave you a formatter.** You already asked the right
+  question, and got `chore: apply formatter` as the answer. The
+  investigation usually dies right here; this is the point the tracer is
+  built to push past.
+- **Inherited code, authors gone.** A condition that makes no sense in a
+  file whose original authors left years ago. "Why is this here" with
+  nobody left to ask; the history is the only witness still around.
+
+Both entry points, natural language ("can I delete this?") or
+`/can-i-delete-this:check`, land in the same workflow; the Usage section
+below covers the three argument shapes the command accepts.
+
+## The twenty-commit threshold
 
 Run the tracer on every request, regardless of history size. It is what
 produces the report, the mechanically-checked evidence, and the
@@ -159,6 +183,34 @@ blame-vs-real-introduction timeline, exactly like the hero image above.
 paste-ready keep-comment, deletion checklist, PR body or question,
 depending on the grade.
 
+### A worked example, reproducible on your machine
+
+The hero image at the top of this page is not a mockup; it is a render
+against `build_deep_history`, a fixture you can build yourself:
+
+    python3 -c "
+    import sys; sys.path.insert(0, 'tests/fixtures')
+    from make_fixture_repo import build_deep_history
+    print(build_deep_history('/tmp/cidt-demo'))"
+    python3 skills/can-i-delete-this/scripts/trace.py \
+      --repo /tmp/cidt-demo/deep_history --file session_guard.py --lines 4:4
+
+The repository holds 113 commits on one file. Line 4 is a security guard
+(`raise SecurityError("replayed token rejected")`) added by
+`fix: reject replayed session tokens after logout (#5521)` in January
+2018, then buried under 110 build-marker commits and finally re-touched
+by a `chore: apply formatter` commit that flipped its quote style.
+`git blame` on line 4 reports the formatter. The tracer's output holds
+both: the formatter arrives via `why: "blame"`, and the 2018 fix arrives
+via `why: "pickaxe"`, recovered by content search on the line's own
+tokens; a reader of the two diffs (that is the agent's one job in this
+pipeline) sees one commit that introduced the guard and one that changed
+its quotes. The resulting verdict cites the fix with `role: "introduced"`
+and the formatter with `role: "reference"`, which is why the hero's
+timeline shows the real-introduction tag on exactly one row, with the
+formatter rendered plain above it, present, cited, and visibly not the
+answer.
+
 ## Grading
 
 | Grade | Use when |
@@ -260,6 +312,21 @@ squash 커밋이 실제 도입 커밋 위에 쌓이면 blame은 그 위에 있�
 보여줍니다. 이 스킬은 blame의 후보를 노이즈로 채점하고, pickaxe와
 line-history로 실제 도입 커밋을 찾아, 삭제 위험도를 커밋 근거와 함께
 등급으로 매깁니다(`danger`/`conditional`/`safe`/`unknown`).
+
+쓰이는 순간은 네 가지입니다. 코드를 지우는 PR을 리뷰할 때(그 guard가
+잔해인지 하중을 받는 코드인지 근거 없이 베팅하게 되는 순간), dead code를
+정리하다 "지워도 될 것 같은데"에서 멈출 때, `git blame`이
+`chore: apply formatter`를 답으로 내놓아 조사가 거기서 끝나버릴 때, 그리고
+원작자가 떠난 코드에서 "이거 왜 있지"를 물을 사람이 히스토리밖에 없을 때.
+
+맨 위 히어로 이미지는 목업이 아니라 재현 가능한 실행 결과입니다.
+`tests/fixtures/make_fixture_repo.py`의 `build_deep_history`로 113커밋짜리
+저장소를 빌드하면, 4번째 줄의 보안 guard에 대해 blame은 quote만 바꾼
+포맷터 커밋을 보고하고, tracer는 pickaxe로 111커밋 아래 묻힌 2018년 보안
+수정(#5521)을 찾아냅니다. 판정은 그 수정을 `role: "introduced"`로,
+포맷터를 `role: "reference"`로 인용하고, 그래서 타임라인에서 진짜 도입
+태그가 정확히 한 줄에만 붙습니다. 재현 명령은 본문의 "A worked example"
+절에 있습니다.
 
 측정으로 검증한 경계가 하나 있습니다. `git blame -w`는 공백만 바뀐 포맷터
 커밋을 이미 스스로 뚫습니다. 이 도구가 겨냥하는 것은 quote 통일이나
