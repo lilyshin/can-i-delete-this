@@ -71,9 +71,14 @@ Do not add a rule for a failure mode you have not observed; see
 
 ## Style
 
-- Documentation in English. The only Korean text this project ships is
-  README.md's "한국어 요약" block and the verbatim quotes preserved in
-  `tests/pressure/`. If you keep Korean-language design notes for
-  yourself while working, keep them local; they are not part of this
-  repository and should not be included in a PR.
-- Commit subjects in English.
+- **Shipped documentation stays in English**: `SKILL.md` is read by an
+  agent on every invocation and the reference docs alongside it serve the
+  same audience, so the files this project ships keep one language. The
+  exceptions that already exist stay: README.md's "한국어 요약" block and
+  the verbatim quotes preserved in `tests/pressure/`.
+- **Everything you submit can be in Korean or English, whichever you
+  write faster.** Issues, PR descriptions, review comments, commit
+  messages: 한국어로 쓰셔도 됩니다. 오히려 좋습니다 (the maintainer reads
+  Korean first). The existing commit history uses English subjects with
+  Korean bodies; matching that is appreciated but a fully Korean commit
+  message will not get a PR rejected.

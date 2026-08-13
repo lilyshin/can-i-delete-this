@@ -4,6 +4,8 @@ about: A commit was scored is_noise wrong, or a real introducing commit was miss
 labels: noise-catalog
 ---
 
+<!-- 한국어로 작성하셔도 됩니다. Korean or English both welcome. -->
+
 **Which noise category, if any, applies?**
 
 See `skills/can-i-delete-this/noise-catalog.md` (N1-N11). If this does not fit
