@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "fixtures"))
 sys.path.insert(0, os.path.join(
     os.path.dirname(__file__), "..", "skills", "can-i-delete-this", "scripts"))
 
+import gitq  # noqa: E402
 import make_fixture_repo  # noqa: E402
 import scan as scanmod  # noqa: E402
 
@@ -89,6 +90,17 @@ class TestLimits(ScanCase):
         self.assertEqual(limits["files_skipped_unsupported"], 1)
         self.assertFalse(limits["candidate_cap_reached"])
 
+    def test_too_large_and_missing_at_head_are_counted_in_limits(self):
+        """Neither skip reason is exercised by this fixture, but both keys
+        must exist and read 0 (not be absent): a caller reading `limits`
+        programmatically cannot see a count that only ever appears as
+        conditional free text in `notes`."""
+        limits = self.data["limits"]
+        self.assertIn("files_skipped_too_large", limits)
+        self.assertIn("files_missing_at_head", limits)
+        self.assertEqual(limits["files_skipped_too_large"], 0)
+        self.assertEqual(limits["files_missing_at_head"], 0)
+
     def test_block_comment_boundary_is_disclosed(self):
         self.assertTrue(
             any("block comment" in n.lower() for n in self.data["notes"]),
@@ -104,12 +116,74 @@ class TestLimits(ScanCase):
 class TestUnsupportedExtensions(ScanCase):
 
     def test_unsupported_extension_is_counted_not_scanned(self):
-        """README.rst contains three code-shaped comment lines. It must be
-        counted as skipped, and it must not produce a candidate: a language
-        absent from COMMENT_MARKERS is not guessed at."""
+        """README.rst contains two code-shaped comment lines (`def
+        looks_like_code(x):` and `return x`; `pass` matches none of
+        `scanner._CODE_SHAPE`'s patterns). It must be counted as skipped,
+        and it must not produce a candidate: a language absent from
+        COMMENT_MARKERS is not guessed at."""
         self.assertEqual(self.data["limits"]["files_skipped_unsupported"], 1)
         self.assertNotIn("README.rst",
                           [c["path"] for c in self.data["candidates"]])
+
+
+class TestOrderingIsReal(unittest.TestCase):
+    """`test_oldest_first` above would still pass with `scan()`'s sort key
+    deleted entirely: `billing.py` sorts before `notes.py` both
+    alphabetically and chronologically, and `ls-files` already lists them
+    in that order. This fixture makes the two orders disagree, so only a
+    real oldest-first sort can pass."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.info = make_fixture_repo.build_ordering_probe(cls.tmp.name)
+        cls.data = scanmod.scan(cls.info["repo"], ".", now=NOW)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_chronological_order_wins_over_alphabetical(self):
+        paths = [c["path"] for c in self.data["candidates"]]
+        # aaa_recent.py sorts first alphabetically (and is what ls-files
+        # would list first); zzz_old.py's block is from 2019, three years
+        # before aaa_recent.py's 2024 block, so it must lead the results.
+        self.assertEqual(paths[0], "zzz_old.py", paths)
+        self.assertEqual(paths[1], "aaa_recent.py", paths)
+
+
+class TestOldestOfSeveralBlameShas(unittest.TestCase):
+    """Every block in `build_commented_out` carries exactly one blame sha,
+    so `touched_by_commits` is always 1 there and `_oldest`'s "pick the
+    oldest of several, report how many" behavior is never exercised. A
+    regression returning the newest sha instead of the oldest, or
+    hardcoding `touched_by_commits = 1`, would pass every other test in
+    this file."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.info = make_fixture_repo.build_touched_twice(cls.tmp.name)
+        cls.data = scanmod.scan(cls.info["repo"], ".", now=NOW)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_the_fixture_premise_is_two_distinct_blame_shas(self):
+        """Verify the premise directly, so that if a future change to the
+        fixture collapses it back to one sha, this test says so instead of
+        the assertions below silently passing for the wrong reason."""
+        shas = gitq.blame_shas(self.info["repo"], self.info["path"],
+                                self.info["start"], self.info["end"])
+        self.assertEqual(set(shas), {self.info["older_sha"], self.info["later_sha"]},
+                          shas)
+
+    def test_oldest_of_two_blame_shas_is_reported(self):
+        c = next(c for c in self.data["candidates"]
+                 if c["path"] == self.info["path"])
+        self.assertEqual(c["commented_out_by"]["sha"], self.info["older_sha"])
+        self.assertEqual(c["touched_by_commits"], 2)
 
 
 if __name__ == "__main__":

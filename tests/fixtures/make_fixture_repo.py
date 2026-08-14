@@ -1028,3 +1028,108 @@ def build_commented_out(dest: str, *, name: str = "commented_out") -> dict:
         "outage_path": "billing.py",
         "refactor_path": "notes.py",
     }
+
+
+def build_ordering_probe(dest: str, *, name: str = "ordering_probe") -> dict:
+    """Two commented-out blocks whose alphabetical and chronological order
+    disagree, so that `scan()`'s oldest-first sort is exercised for real.
+
+    `aaa_recent.py` sorts first alphabetically (and `ls-files` lists it
+    first) but its block was commented out in 2024. `zzz_old.py` sorts
+    last but its block was commented out in 2019. A `scan()` that dropped
+    its sort key and simply returned candidates in `ls-files`/discovery
+    order would put `aaa_recent.py` first; only a real oldest-first sort
+    puts `zzz_old.py` first.
+    """
+    repo = _init(dest, name)
+    recent = repo / "aaa_recent.py"
+    old = repo / "zzz_old.py"
+
+    recent.write_text(
+        "def charge(order):\n"
+        "    return gateway.charge(order)\n"
+    )
+    old.write_text(
+        "def refund(order):\n"
+        "    return gateway.refund(order)\n"
+    )
+    _commit(repo, "feat: 초기 결제/환불 모듈 추가", "2018-01-01T10:00:00")
+
+    old.write_text(
+        "def refund(order):\n"
+        "    # if order.disputed:\n"
+        "    #     for step in range(3):\n"
+        "    #         gateway.refund(order)\n"
+        "    #     return None\n"
+        "    return gateway.refund(order)\n"
+    )
+    old_sha = _commit(repo, "refactor: 환불 재시도 경로 정리", "2019-03-01T10:00:00")
+
+    recent.write_text(
+        "def charge(order):\n"
+        "    # if order.retryable:\n"
+        "    #     for attempt in range(3):\n"
+        "    #         gateway.charge(order)\n"
+        "    #     return None\n"
+        "    return gateway.charge(order)\n"
+    )
+    recent_sha = _commit(repo, "refactor: 결제 재시도 경로 정리", "2024-03-01T10:00:00")
+
+    return {
+        "repo": str(repo),
+        "old_path": "zzz_old.py",
+        "recent_path": "aaa_recent.py",
+        "old_sha": old_sha,
+        "recent_sha": recent_sha,
+    }
+
+
+def build_touched_twice(dest: str, *, name: str = "touched_twice") -> dict:
+    """One commented-out block whose blame range carries two shas: an older
+    commit comments the block out, then a later commit edits one line
+    inside that same commented block (a comment typo fix, a rephrase of
+    the intent note, anything that rewrites content rather than deleting
+    or adding a line).
+
+    This is the fixture `test_oldest_of_several_blame_shas` needs: every
+    block in `build_commented_out` above carries exactly one blame sha,
+    so `_oldest`'s "pick the oldest of several, report how many" behavior
+    has nothing to exercise without this one.
+    """
+    repo = _init(dest, name)
+    target = repo / "billing_retry.py"
+
+    target.write_text(
+        "def charge(order):\n"
+        "    return gateway.charge(order)\n"
+    )
+    _commit(repo, "feat: 결제 모듈 추가", "2019-01-01T10:00:00")
+
+    target.write_text(
+        "def charge(order):\n"
+        "    # if order.retryable:\n"
+        "    #     for attempt in range(3):\n"
+        "    #         gateway.charge(order)\n"
+        "    #     return None\n"
+        "    return gateway.charge(order)\n"
+    )
+    older_sha = _commit(repo, "hotfix: 재시도 로직 임시 비활성화", "2020-01-01T10:00:00")
+
+    target.write_text(
+        "def charge(order):\n"
+        "    # if order.retryable:\n"
+        "    #     for attempt in range(5):\n"
+        "    #         gateway.charge(order)\n"
+        "    #     return None\n"
+        "    return gateway.charge(order)\n"
+    )
+    later_sha = _commit(repo, "chore: 주석 속 재시도 횟수 표기 수정", "2022-01-01T10:00:00")
+
+    return {
+        "repo": str(repo),
+        "path": "billing_retry.py",
+        "older_sha": older_sha,
+        "later_sha": later_sha,
+        "start": 2,
+        "end": 5,
+    }

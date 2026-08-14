@@ -196,6 +196,8 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
             "files_skipped_unsupported": counts["unsupported"],
             "files_skipped_vendored": counts["vendored"],
             "files_skipped_generated": counts["generated"],
+            "files_skipped_too_large": counts["too_large"],
+            "files_missing_at_head": counts["missing_at_head"],
             "min_lines": min_lines,
             "max_candidates": max_candidates,
             "candidate_cap_reached": cap_reached,
