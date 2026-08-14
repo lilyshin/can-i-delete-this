@@ -72,6 +72,16 @@ class TestChecklistShape(unittest.TestCase):
         self.assertIn("416", out)
         self.assertIn("1294", out)
 
+    def test_scope_counts_too_large_and_missing_at_head(self):
+        """scan.py도 이 두 사유로 파일을 건너뛴다; 체크리스트가 빠뜨리면 스캔 범위를
+        실제보다 적게 보고하게 된다."""
+        out = artifacts.scan_checklist(_scan_data(
+            files_skipped_too_large=2, files_missing_at_head=3))
+        self.assertIn("2", out)
+        self.assertIn("3", out)
+        # total = 416 + 1294 + 0(vendored) + 0(generated) + 2(too_large) + 3(missing) = 1715
+        self.assertIn("1715", out)
+
     def test_cap_is_disclosed(self):
         out = artifacts.scan_checklist(_scan_data(candidate_cap_reached=True))
         self.assertIn("200", out)
@@ -96,6 +106,15 @@ class TestChecklistShape(unittest.TestCase):
             candidates=[_candidate(commented_out_by=None, touched_by_commits=0,
                                     look_first=False)]))
         self.assertIn("src/billing/retry.py:88-92", out)
+        # a candidate with no commit facts must render without inventing one
+        self.assertNotIn("1a2b3c4", out)
+        self.assertNotIn("hotfix: disable retry during outage", out)
+        self.assertNotIn("Gateway kept returning 502", out)
+
+    def test_touched_by_multiple_commits_is_shown(self):
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(touched_by_commits=2)]))
+        self.assertIn("2 commits touched these lines", out)
 
     def test_truncated_body_is_marked(self):
         commit = _candidate()["commented_out_by"]

@@ -104,7 +104,8 @@ _STRINGS = {
         "scan.touched_by": "{count} commits touched these lines; the oldest is shown",
         "scan.scope": "Scan scope: {scanned} of {total} files "
                        "({unsupported} skipped as unsupported, {vendored} vendored, "
-                       "{generated} generated).",
+                       "{generated} generated, {too_large} too large to read, "
+                       "{missing_at_head} missing at HEAD).",
         "scan.cap": "Candidate cap of {cap} was reached; more may exist.",
         "scan.boundary": "Block comments (`/* ... */`) are not detected.",
     },
@@ -168,7 +169,8 @@ _STRINGS = {
         "scan.body_truncated": "(본문 잘림, 나머지는 `git show {sha}`)",
         "scan.touched_by": "이 줄들을 건드린 커밋이 {count}개이고 가장 오래된 것을 보여줍니다",
         "scan.scope": "스캔 범위: 전체 {total}개 파일 중 {scanned}개 "
-                       "(미지원 {unsupported}개, vendored {vendored}개, 생성물 {generated}개 건너뜀).",
+                       "(미지원 {unsupported}개, vendored {vendored}개, 생성물 {generated}개, "
+                       "용량 초과 {too_large}개, HEAD에 없음 {missing_at_head}개 건너뜀).",
         "scan.cap": "후보 상한 {cap}에 도달했습니다. 더 있을 수 있습니다.",
         "scan.boundary": "블록 주석(`/* ... */`)은 감지하지 않습니다.",
     },
@@ -510,7 +512,9 @@ def scan_checklist(scan_data, *, lang="en"):
     unsupported = limits.get("files_skipped_unsupported") or 0
     vendored = limits.get("files_skipped_vendored") or 0
     generated = limits.get("files_skipped_generated") or 0
-    total = scanned + unsupported + vendored + generated
+    too_large = limits.get("files_skipped_too_large") or 0
+    missing_at_head = limits.get("files_missing_at_head") or 0
+    total = scanned + unsupported + vendored + generated + too_large + missing_at_head
 
     lines = []
     if candidates:
@@ -557,7 +561,8 @@ def scan_checklist(scan_data, *, lang="en"):
     lines.append("")
     lines.append(_t(lang, "scan.scope", scanned=scanned, total=total,
                      unsupported=unsupported, vendored=vendored,
-                     generated=generated))
+                     generated=generated, too_large=too_large,
+                     missing_at_head=missing_at_head))
     if limits.get("candidate_cap_reached"):
         lines.append(_t(lang, "scan.cap", cap=limits.get("max_candidates")))
     lines.append(_t(lang, "scan.boundary"))
