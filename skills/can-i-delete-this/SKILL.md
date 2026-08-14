@@ -167,6 +167,16 @@ history size.
    python3 <skill>/scripts/artifacts.py --trace t.json --verdict v.json --copy --lang ko
    ```
 
+## Scanning instead of asking about one line
+
+The workflow above starts from a target the user already suspects. When
+they have no particular line in mind and want to know what is worth asking
+about, `scripts/scan.py` finds blocks of commented-out code under a path
+and attaches the commit that commented each one out. It grades nothing, so
+a scan is not an answer: the user picks an item and that item goes through
+the workflow above unchanged. See batch-mode.md, and never call a scanned
+block safe to delete without running that workflow on it.
+
 ## Grading
 
 | Grade | Use when |
@@ -205,3 +215,5 @@ an evidence item that omits it behaves exactly as it always has.
   diff evidence) versus only hint (on subject vocabulary), and how to route
   around each
 - strategy-tree.md: what to do when the obvious path comes up empty
+- batch-mode.md: scanning a directory for candidates instead of starting
+  from one line, and what the scan deliberately does not decide

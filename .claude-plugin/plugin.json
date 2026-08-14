@@ -8,5 +8,5 @@
   "license": "MIT",
   "keywords": ["git", "blame", "archaeology", "legacy-code", "refactoring", "pickaxe"],
   "skills": ["./skills/"],
-  "commands": ["./commands/check.md"]
+  "commands": ["./commands/check.md", "./commands/scan.md"]
 }
