@@ -10,11 +10,19 @@ argument, scan the current directory and say so.
 
 ## 1. Run the scan
 
+With an argument:
+
     python3 <skill>/scripts/scan.py --repo <repo> --path $ARGUMENTS
 
-If the session spans more than one git repository, name the one you scanned
-in your answer. Do not assume the current working directory's repository
-just because it is current.
+With no argument, omit `--path` rather than passing it with nothing after
+it, which `scan.py`'s argument parser rejects; the default is already the
+current directory:
+
+    python3 <skill>/scripts/scan.py --repo <repo>
+
+Either way, say which directory you scanned. If the session spans more than
+one git repository, name the one you scanned in your answer. Do not assume
+the current working directory's repository just because it is current.
 
 ## 2. Hand the list over
 

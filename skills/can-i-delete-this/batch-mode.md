@@ -7,8 +7,12 @@ ask that about". It grades nothing.
 ## What it looks for
 
 One signal: a block of commented-out code. A run of consecutive line
-comments, `MIN_BLOCK_LINES` or longer, where at least `CODE_SHAPE_RATIO` of
-the non-blank comment lines carry syntax prose would not.
+comments, `MIN_BLOCK_LINES` or longer, where the lines that carry syntax
+prose would not also number `MIN_BLOCK_LINES` or more on their own, and
+where that count is at least `CODE_SHAPE_RATIO` of the non-blank comment
+lines. A run with enough blank comment lines mixed in can pass the length
+and ratio gates while still falling short on that middle count, and is
+dropped either way.
 
 That signal was chosen by measurement, not by taste. Against a 1710-file
 Kotlin repository:
@@ -38,9 +42,10 @@ what this is and that nobody restored it.
 
 ## Workflow
 
-1. `python3 scripts/scan.py --repo <repo> --path <dir>` and read the JSON.
-2. `python3 scripts/artifacts.py --scan scan.json --lang <lang>` for a
-   checklist to paste into an issue.
+1. `python3 <skill>/scripts/scan.py --repo <repo> --path <dir>` and read the
+   JSON.
+2. `python3 <skill>/scripts/artifacts.py --scan scan.json --lang <lang>` for
+   a checklist to paste into an issue.
 3. Disclose the scan scope from `limits`, including what was skipped and
    whether the candidate cap was reached.
 4. When the user picks one, run the ordinary single-target workflow on
@@ -56,9 +61,9 @@ what this is and that nobody restored it.
 - A language absent from `scanner.COMMENT_MARKERS` is not scanned. The
   count of skipped files is in `limits.files_skipped_unsupported`.
 - `look_first`'s vocabulary is English and Korean. Unlike the subject
-  matching 0.7.0 removed from noise scoring, this one filters nothing and
-  decides nothing, so a missed word costs an ordering nudge, not a
-  discarded candidate.
+  matching noise scoring deliberately refuses to do, this one filters
+  nothing and decides nothing, so a missed word costs an ordering nudge,
+  not a discarded candidate.
 
 ## What batch mode does not do
 
