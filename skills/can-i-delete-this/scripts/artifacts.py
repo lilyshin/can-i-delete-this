@@ -92,6 +92,21 @@ _STRINGS = {
         "common.reason_unknown": "reason unknown",
         "common.no_subject": "no subject",
         "common.date_unknown": "date unknown",
+
+        "scan.header": "Commented-out code candidates: {count} ({path})",
+        "scan.none": "No commented-out code blocks found under {path}.",
+        "scan.intro": "Oldest first. Nothing here is graded. To grade one, run "
+                       "`/can-i-delete-this:check <path>:<start>-<end>`.",
+        "scan.look_first": "look first",
+        "scan.item_meta": "{lines} lines, commented out {age} days ago",
+        "scan.item_meta_unknown": "{lines} lines, commenting commit unknown",
+        "scan.body_truncated": "(body truncated; `git show {sha}` for the rest)",
+        "scan.touched_by": "{count} commits touched these lines; the oldest is shown",
+        "scan.scope": "Scan scope: {scanned} of {total} files "
+                       "({unsupported} skipped as unsupported, {vendored} vendored, "
+                       "{generated} generated).",
+        "scan.cap": "Candidate cap of {cap} was reached; more may exist.",
+        "scan.boundary": "Block comments (`/* ... */`) are not detected.",
     },
     "ko": {
         "label.grade": "등급",
@@ -142,6 +157,20 @@ _STRINGS = {
         "common.reason_unknown": "이유 불명",
         "common.no_subject": "제목 없음",
         "common.date_unknown": "날짜 알 수 없음",
+
+        "scan.header": "주석 처리된 코드 후보 {count}건 ({path})",
+        "scan.none": "{path} 아래에 주석 처리된 코드 블록이 없습니다.",
+        "scan.intro": "오래된 순입니다. 등급은 매기지 않았습니다. 각 항목을 판정하려면 "
+                       "`/can-i-delete-this:check <path>:<start>-<end>`를 실행하세요.",
+        "scan.look_first": "먼저 볼 것",
+        "scan.item_meta": "{lines}줄, {age}일 전에 주석 처리됨",
+        "scan.item_meta_unknown": "{lines}줄, 주석 처리한 커밋을 알 수 없음",
+        "scan.body_truncated": "(본문 잘림, 나머지는 `git show {sha}`)",
+        "scan.touched_by": "이 줄들을 건드린 커밋이 {count}개이고 가장 오래된 것을 보여줍니다",
+        "scan.scope": "스캔 범위: 전체 {total}개 파일 중 {scanned}개 "
+                       "(미지원 {unsupported}개, vendored {vendored}개, 생성물 {generated}개 건너뜀).",
+        "scan.cap": "후보 상한 {cap}에 도달했습니다. 더 있을 수 있습니다.",
+        "scan.boundary": "블록 주석(`/* ... */`)은 감지하지 않습니다.",
     },
 }
 
@@ -459,6 +488,82 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
     raise ValueError("unsupported grade: {!r}".format(grade))
 
 
+def scan_checklist(scan_data, *, lang="en"):
+    """A markdown checklist of a scan's candidates, ready to paste into an
+    issue or a pull request.
+
+    Deliberately not a report and deliberately not graded. The scan found
+    blocks and read the commits behind them; deciding what to do with one
+    means running the single-target workflow on it, which is what the
+    closing line tells the reader.
+
+    Checkbox syntax is written literally. In 0.2.2 an escape sequence built
+    it instead, Python read the digits as octal, and every shipped version
+    had broken checkboxes.
+    """
+    lang = _resolve_lang(lang)
+    limits = scan_data.get("limits") or {}
+    candidates = scan_data.get("candidates") or []
+    path = (scan_data.get("target") or {}).get("path") or "."
+
+    scanned = limits.get("files_scanned") or 0
+    unsupported = limits.get("files_skipped_unsupported") or 0
+    vendored = limits.get("files_skipped_vendored") or 0
+    generated = limits.get("files_skipped_generated") or 0
+    total = scanned + unsupported + vendored + generated
+
+    lines = []
+    if candidates:
+        lines.append("## " + _t(lang, "scan.header", count=len(candidates),
+                                 path=path))
+        lines.append("")
+        lines.append(_t(lang, "scan.intro"))
+        lines.append("")
+    else:
+        lines.append("## " + _t(lang, "scan.none", path=path))
+        lines.append("")
+
+    for candidate in candidates:
+        target = "{}:{}-{}".format(candidate.get("path", ""),
+                                    candidate.get("start", ""),
+                                    candidate.get("end", ""))
+        commit = candidate.get("commented_out_by") or {}
+        prefix = "- [ ] "
+        if candidate.get("look_first"):
+            prefix += "**" + _t(lang, "scan.look_first") + "** "
+        if commit.get("age_days") is None:
+            meta = _t(lang, "scan.item_meta_unknown",
+                       lines=candidate.get("lines", 0))
+        else:
+            meta = _t(lang, "scan.item_meta", lines=candidate.get("lines", 0),
+                       age=commit["age_days"])
+        lines.append("{}`{}` ({})".format(prefix, target, meta))
+
+        sha = commit.get("sha") or ""
+        if sha:
+            lines.append("      `{}` {}".format(sha[:7],
+                                                 commit.get("subject") or ""))
+        body = (commit.get("body") or "").strip()
+        if body:
+            first = body.splitlines()[0]
+            lines.append("      > " + first)
+            if commit.get("body_truncated"):
+                lines.append("      > " + _t(lang, "scan.body_truncated",
+                                              sha=sha[:7]))
+        if (candidate.get("touched_by_commits") or 0) > 1:
+            lines.append("      " + _t(lang, "scan.touched_by",
+                                        count=candidate["touched_by_commits"]))
+
+    lines.append("")
+    lines.append(_t(lang, "scan.scope", scanned=scanned, total=total,
+                     unsupported=unsupported, vendored=vendored,
+                     generated=generated))
+    if limits.get("candidate_cap_reached"):
+        lines.append(_t(lang, "scan.cap", cap=limits.get("max_candidates")))
+    lines.append(_t(lang, "scan.boundary"))
+    return "\n".join(lines)
+
+
 def to_clipboard(text):
     """Copy text to the clipboard using the first available system tool.
 
@@ -477,20 +582,30 @@ def to_clipboard(text):
 
 def main():
     ap = argparse.ArgumentParser(description="Emit the next-step artifact.")
-    ap.add_argument("--trace", required=True)
-    ap.add_argument("--verdict", required=True)
+    ap.add_argument("--trace")
+    ap.add_argument("--verdict")
+    ap.add_argument("--scan", help="a scan.py JSON file; emits the candidate "
+                                    "checklist instead of a verdict artifact")
     ap.add_argument("--copy", action="store_true")
     ap.add_argument("--lang", default="en", help="language for the artifact's own "
                     "wording (en, ko; unknown values fall back to en). Data read "
                     "from git or the verdict -- shas, paths, subjects, authors, "
                     "dates -- is never translated.")
     args = ap.parse_args()
-    with open(args.trace, encoding="utf-8") as fh:
-        t = json.load(fh)
-    with open(args.verdict, encoding="utf-8") as fh:
-        v = json.load(fh)
-    content = v.get("artifact", {}).get("content") or skeleton(
-        v.get("grade", "unknown"), t, v.get("evidence"), lang=args.lang)
+
+    if args.scan:
+        with open(args.scan, encoding="utf-8") as fh:
+            content = scan_checklist(json.load(fh), lang=args.lang)
+    elif args.trace and args.verdict:
+        with open(args.trace, encoding="utf-8") as fh:
+            t = json.load(fh)
+        with open(args.verdict, encoding="utf-8") as fh:
+            v = json.load(fh)
+        content = v.get("artifact", {}).get("content") or skeleton(
+            v.get("grade", "unknown"), t, v.get("evidence"), lang=args.lang)
+    else:
+        ap.error("pass either --scan, or both --trace and --verdict")
+
     print(content)
     if args.copy:
         tool = to_clipboard(content)
