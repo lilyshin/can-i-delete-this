@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.8.0 - 2026-08-13
+
+Batch mode. Until now the skill needed a target you already suspected,
+which was the observed adoption barrier: working through an AI chat, you
+rarely stop to wonder whether a particular function is still needed.
+`scan.py` inverts that. It finds blocks of commented-out code under a path
+and attaches the commit that commented each one out, oldest first.
+
+The signal was chosen by measurement against a 1710-file Kotlin
+repository, not by taste:
+
+| Signal | Result | Decision |
+|---|---|---|
+| Unreferenced files, by filename | 21 of 150 sampled, of which 2 were plausible (10% precision) | rejected |
+| Unreferenced symbols | Needs a per-language adapter; a Python sample scored zero, because a module name is not a symbol | deferred |
+| Commented-out blocks | 18 across 1710 files (1%), median 4 lines | shipped |
+
+The third also plays to what this project can do that a linter cannot. A
+linter can say code is unreachable. Only the history can say it was
+commented out during an incident under a commit body reading "restore
+after #3391", four years ago.
+
+- New `scripts/scanner.py`, pure and git-free: a run of consecutive line
+  comments is a block only when the run itself is at least 3 lines long,
+  at least 3 of its non-blank lines carry syntax prose would not, and
+  those code-shaped lines make up at least 70% of the non-blank total. A
+  short run at a perfect ratio still misses the count gate and is not a
+  block. A TODO line inside a run ends the run instead of
+  being dropped from it, so a note between two commented-out fragments
+  separates them rather than joining them. Blank comment lines stay in the
+  block's span but leave the ratio's denominator, because a commented-out
+  function has blank lines in it and counting them as prose rejected the
+  block.
+- New `scripts/scan.py`: enumerates with `ls-files`, reads each file at
+  HEAD, and blames each block to find the commit that commented it out.
+  When a block carries several blame shas, the oldest is reported with
+  `touched_by_commits` naming how many there were, since "how long has
+  this been sitting here" is measured from when the block started.
+  Vendored, generated, unsupported and oversized files are skipped and
+  counted in `limits`, and so is a tracked file `ls-files` lists but `show
+  HEAD:<path>` cannot read (`files_missing_at_head`). A failed blame leaves
+  the candidate in place with `commented_out_by: null`, because failing to
+  learn a fact is not the same as the candidate not existing.
+- `look_first` marks a candidate whose commenting commit mentions an
+  incident, a revert, a rollback or a temporary disable, in English or
+  Korean. It is an ordering hint. It filters nothing and grades nothing,
+  which is the distinction 0.7.0 drew for subject vocabulary generally.
+- New `artifacts.scan_checklist` and `artifacts.py --scan`: a markdown
+  checklist to paste into an issue, carrying each block's path and line
+  range, its age, and the commenting commit's sha, subject and first body
+  line. Checkbox syntax is written literally, since 0.2.2 built it from an
+  escape sequence Python read as octal and shipped broken checkboxes in
+  every version until 0.2.3.
+- New `/can-i-delete-this:scan <path>` command and `batch-mode.md`. Both
+  say the same thing in different words: the scan grades nothing, and a
+  list of plausible-looking "safe" judgements nobody verified is the
+  failure this project exists to prevent.
+- Nothing in the scan output uses a grade word. Grading a candidate means
+  running the ordinary single-target workflow on it, with every
+  non-negotiable rule in `SKILL.md` in force.
+- The README now states that the four artifacts are how a verdict
+  outlives its report (a keep-comment in the code, a pull request body in
+  git history, a question addressed to an author), and that there is no
+  cache on purpose: a stored verdict goes stale silently, while a comment
+  travels with the line it describes.
+
 ## 0.7.0 - 2026-08-13
 
 Noise classification no longer reads the commit subject to decide anything.

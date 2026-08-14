@@ -52,6 +52,16 @@ introduced this and why"), or start from a target you already have:
     /can-i-delete-this:check src/payment.py:10-25
     /can-i-delete-this:check chargeCustomerOnce
 
+When no particular line is on your mind, scan instead:
+
+    /can-i-delete-this:scan src/billing/
+
+That looks for blocks of commented-out code and lists each with the commit
+that commented it out, oldest first. It grades nothing: you pick an item,
+and that item goes through the workflow above. The signal was picked by
+measurement, and `skills/can-i-delete-this/batch-mode.md` has the numbers
+and the boundaries.
+
 `path:line` and `path:start-end` go straight to the tracer. A bare symbol is
 looked up first, and the resolved file and line get stated back to you before
 anything runs, so a wrong target cannot pass silently; with no argument it
@@ -81,6 +91,15 @@ subject or a date.
 
 A `danger` verdict with no guarding test says so and proposes the regression
 test to add before anything gets deleted.
+
+Those four artifacts are also how a verdict outlives the report. A
+keep-comment lives in the code, where the next person to consider deleting
+the line will see it without knowing this tool exists. A pull request body
+lives in the git history of the deletion, which is where "we checked, and
+it was safe" belongs once the code is gone. An unknown verdict becomes a
+question addressed to a named author. There is no cache and no database on
+purpose: a stored verdict goes stale silently, while a comment travels with
+the line it describes and gets read in review.
 
 <details>
 <summary>Reproduce the report at the top of this page</summary>
@@ -154,19 +173,16 @@ So a formatter sweep is caught whether its subject reads
 (`tests/test_noise_language_independence.py` builds the same repository six
 ways and pins one verdict across all of them).
 
-Until 0.7.0 the subject did the filtering, which broke twice over. It scored
-non-English repositories as if every sweep were a real change. And in English
-it deleted evidence: measured on a 20,000-commit repository, the commit
-`blame` reported for one line touched 310 files with a PR-shaped subject, so
-the old rule discarded it, while its diff on that one file removed 6 lines and
-added 18. It wrote the line being asked about.
+Filtering on the subject would fail twice over. It would score non-English
+repositories as if every sweep were a real change, and in English it would
+delete evidence: on a 20,000-commit repository, the commit `blame` reports for
+one line touches 310 files with a PR-shaped subject, while its diff on that
+one file removes 6 lines and adds 18. It wrote the line being asked about.
 
-Subject vocabulary is still read, and now reported as `hints` for the agent to
+Subject vocabulary is still read, and reported as `hints` for the agent to
 weigh alongside the diff, because the model in this pipeline reads every
-language and a regex reads one. What it costs, measured on the same
-repository: about 8% more wall time and a handful more candidates per query.
-Leaving debris in the list costs one extra read; discarding the real
-introducing commit cannot be undone.
+language and a regex reads one. Leaving debris in the candidate list costs one
+extra read; discarding the real introducing commit cannot be undone.
 
 ## Safety
 
