@@ -928,3 +928,103 @@ def build_body_message(dest: str, *, body: str = None,
 
     return {"repo": str(repo), "path": "payment.py", "line": 3,
             "real_sha": real_sha, "body": body}
+
+
+def build_commented_out(dest: str, *, name: str = "commented_out") -> dict:
+    """Six shapes of comment block in one repository, of which exactly two
+    are commented-out code.
+
+    1. `outage_sha` comments out five lines during an incident and says why
+       in the commit body. A candidate, and `look_first`.
+    2. `refactor_sha` comments out four lines with no body. A candidate,
+       not `look_first`.
+    3. A TODO run of four lines. Not a candidate.
+    4. A license header. Not a candidate.
+    5. A commented-out block under `vendor/`. Skipped as vendored.
+    6. A commented-out block in `README.rst`. Skipped as an unsupported
+       extension, and counted as one.
+
+    Dates are fixed, and `scan()` takes an injectable `now`, so the
+    age ordering these fixtures exercise is deterministic.
+    """
+    repo = _init(dest, name)
+    (repo / "vendor").mkdir()
+
+    live = repo / "billing.py"
+    other = repo / "notes.py"
+    licensed = repo / "licensed.py"
+    vendored = repo / "vendor" / "thirdparty.py"
+    # A tracked file whose extension is not in COMMENT_MARKERS, so the
+    # unsupported-extension count has something real to count. An
+    # untracked file would not do: `ls-files` never lists it, so the count
+    # would be zero either way and the test would pass without testing.
+    unsupported = repo / "README.rst"
+
+    live.write_text(
+        "def charge(order):\n"
+        "    return gateway.charge(order)\n"
+    )
+    other.write_text(
+        "# TODO: split this module once the migration lands\n"
+        "# TODO: and drop the compatibility shim below\n"
+        "# TODO: see the platform channel for context\n"
+        "# TODO: owner is the billing team\n"
+        "def helper():\n"
+        "    return 1\n"
+    )
+    licensed.write_text(
+        "# Copyright 2020 Example Inc.\n"
+        "# SPDX-License-Identifier: MIT\n"
+        "# Licensed under the terms above.\n"
+        "def ok():\n"
+        "    return True\n"
+    )
+    unsupported.write_text("Docs\n====\n\n# def looks_like_code(x):\n#     return x\n#     pass\n")
+    vendored.write_text(
+        "# def vendored_dead(x):\n"
+        "#     return x.compute()\n"
+        "#     raise NotImplementedError()\n"
+        "def vendored_live():\n"
+        "    return 0\n"
+    )
+    _commit(repo, "feat: 결제 기반 추가", "2019-01-05T10:00:00")
+
+    # 1. The incident: retry logic commented out, reason in the body.
+    live.write_text(
+        "def charge(order):\n"
+        "    # if order.retryable:\n"
+        "    #     for attempt in range(3):\n"
+        "    #         gateway.charge(order)\n"
+        "    #     return None\n"
+        "    # end retry\n"
+        "    return gateway.charge(order)\n"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "hotfix: 게이트웨이 장애로 재시도 비활성화",
+         "-m", "게이트웨이가 502를 계속 반환해서 재시도를 임시로 끕니다. #3391 해결 후 되살릴 것.",
+         date="2021-06-14T09:12:00")
+    outage_sha = _git(repo, "rev-parse", "HEAD")
+
+    # 2. The refactoring leftover: no body, later date.
+    other.write_text(
+        "# TODO: split this module once the migration lands\n"
+        "# TODO: and drop the compatibility shim below\n"
+        "# TODO: see the platform channel for context\n"
+        "# TODO: owner is the billing team\n"
+        "# def old_fee(amount):\n"
+        "#     rate = lookup(amount)\n"
+        "#     return amount * rate\n"
+        "# end old_fee\n"
+        "def helper():\n"
+        "    return 1\n"
+    )
+    refactor_sha = _commit(repo, "refactor: 수수료 계산 헬퍼 정리",
+                            "2023-11-02T10:00:00")
+
+    return {
+        "repo": str(repo),
+        "outage_sha": outage_sha,
+        "refactor_sha": refactor_sha,
+        "outage_path": "billing.py",
+        "refactor_path": "notes.py",
+    }
