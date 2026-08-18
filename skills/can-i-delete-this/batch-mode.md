@@ -118,7 +118,13 @@ and they may never have read this file.
   A string literal that itself spans several lines, a Kotlin text block, a
   C# verbatim string, a multi-line SQL or PHP literal, resets that count
   at every line break, so a `*/` that is really still inside the literal
-  can end the region early.
+  can end the region early. The measurement behind this covers Kotlin,
+  Java, JavaScript, TypeScript and C; SQL was sampled at 510 files with no
+  occurrence, and PHP was not sampled at all, so a repository where
+  single-quoted strings are the norm is reasoned about rather than
+  measured. The direction of the remaining error is a region ending early,
+  which under-reports a candidate rather than putting live code in front of
+  you.
 - A `_NOT_CODE` line (a TODO, an annotation, a license header, a URL)
   inside a region ends the run there, and the run reported then covers its
   own content lines only: the region's `/*` and `*/` lines are not

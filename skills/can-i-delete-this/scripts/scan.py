@@ -261,6 +261,22 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
     }
 
 
+def _at_least_one(raw):
+    """An argparse type for `--min-lines`.
+
+    A run of zero or fewer lines is not a request the scanner can answer:
+    `scanner._emit` indexes the run's first and last line, so zero reaches
+    it as an `IndexError` rather than as an empty result. Rejecting it here
+    keeps that a usage error with a readable message instead of a
+    traceback, and leaves every value the caller could mean untouched.
+    """
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError(
+            "must be 1 or greater, got {}".format(value))
+    return value
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Scan a path for commented-out code. Finds candidates "
@@ -268,7 +284,7 @@ def main():
     ap.add_argument("--repo", required=True)
     ap.add_argument("--path", default=".",
                      help="directory or file to scan, relative to the repo")
-    ap.add_argument("--min-lines", type=int, default=None,
+    ap.add_argument("--min-lines", type=_at_least_one, default=None,
                      help="shortest comment run to report (default {})".format(
                          scanner.MIN_BLOCK_LINES))
     ap.add_argument("--max-candidates", type=int, default=200)
