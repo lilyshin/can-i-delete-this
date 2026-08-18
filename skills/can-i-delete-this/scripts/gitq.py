@@ -185,24 +185,45 @@ def commit_meta(repo, sha):
     )
 
 
-def blame_args(path, start, end):
+def blame_args(path, start, end, rev=None):
     """The exact argv `blame_shas` passes to `run_git`, exposed so callers
     that need to *display* the command (the reproduction-commands section
     of the report) can show the literal invocation instead of a
     hand-written approximation that could drift from what actually runs.
+
+    `rev` names the revision to blame. Omitted (the default) git blames the
+    working tree, which is what a caller whose line numbers came from the
+    working tree wants. A caller whose line numbers came from a committed
+    revision must pass that same revision: blaming the working tree with
+    line numbers read from `show HEAD:<path>` attributes a block to
+    whatever happens to sit on those lines after an uncommitted edit.
     """
-    return [
+    args = [
         "blame", "-w", "-C", "-C", "-C", "--porcelain",
-        "-L", "{},{}".format(start, end), "--", path,
+        "-L", "{},{}".format(start, end),
     ]
+    if rev:
+        args.append(rev)
+    args.extend(["--", path])
+    return args
 
 
-def blame_shas(repo, path, start, end):
-    out = run_git(repo, blame_args(path, start, end))
+# git's "not committed yet" marker: the sha blame prints for a line that
+# exists only in the working tree or the index. It is a valid-looking 40
+# hex characters that can never name a commit, so every caller that feeds
+# blame output to `commit_meta` would raise on it. Rejected here, at the
+# one place blame output is parsed, rather than in each caller.
+ZERO_SHA = "0" * 40
+
+
+def blame_shas(repo, path, start, end, rev=None):
+    out = run_git(repo, blame_args(path, start, end, rev=rev))
     shas = []
     for line in out.splitlines():
         parts = line.split()
         if len(parts) >= 3 and len(parts[0]) == 40 and parts[0] not in shas:
+            if parts[0] == ZERO_SHA:
+                continue
             try:
                 int(parts[1])
                 int(parts[2])

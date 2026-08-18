@@ -348,5 +348,77 @@ class TestQuotepathOffCarveOut(unittest.TestCase):
             gitq.run_git("/tmp", ["-c", "core.quotepath=true", "log"])
 
 
+class TestBlameRevision(unittest.TestCase):
+    """A caller whose line numbers came from a committed revision must be
+    able to blame that same revision. Without it, one uncommitted edit
+    makes `blame -L` answer for whichever lines the working tree happens to
+    hold at those numbers."""
+
+    def test_default_argv_is_unchanged(self):
+        """trace.py calls this with three arguments and prints the result as
+        a reproduction command; it must keep running and displaying exactly
+        what it does today."""
+        self.assertEqual(
+            gitq.blame_args("src/a.py", 10, 12),
+            ["blame", "-w", "-C", "-C", "-C", "--porcelain", "-L", "10,12",
+             "--", "src/a.py"])
+
+    def test_revision_is_placed_where_git_expects_it(self):
+        self.assertEqual(
+            gitq.blame_args("src/a.py", 10, 12, rev="HEAD"),
+            ["blame", "-w", "-C", "-C", "-C", "--porcelain", "-L", "10,12",
+             "HEAD", "--", "src/a.py"])
+
+    def test_blaming_head_ignores_an_uncommitted_edit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_commented_out(tmp)
+            target = os.path.join(info["repo"], "billing.py")
+            with open(target, encoding="utf-8") as fh:
+                text = fh.read()
+            with open(target, "w", encoding="utf-8") as fh:
+                fh.write(text.replace("range(3)", "range(9)"))
+
+            head = gitq.blame_shas(info["repo"], "billing.py", 2, 6, rev="HEAD")
+            self.assertEqual(head, [info["outage_sha"]], head)
+
+
+class TestZeroShaIsRejected(unittest.TestCase):
+    """git prints the all-zeros sha for a line that is not committed yet.
+    It is 40 hex characters and passes every other shape check, so it used
+    to reach `commit_meta`, which raises `fatal: bad object`. It can never
+    name a commit, so it is dropped where blame output is parsed rather
+    than in each caller."""
+
+    def test_uncommitted_lines_are_dropped_not_returned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_commented_out(tmp)
+            target = os.path.join(info["repo"], "billing.py")
+            with open(target, encoding="utf-8") as fh:
+                text = fh.read()
+            with open(target, "w", encoding="utf-8") as fh:
+                fh.write(text.replace("range(3)", "range(9)"))
+
+            # No rev: this blames the working tree, where line 3 is the
+            # edited, uncommitted line.
+            shas = gitq.blame_shas(info["repo"], "billing.py", 3, 3)
+            self.assertNotIn(gitq.ZERO_SHA, shas)
+            self.assertEqual(shas, [])
+
+    def test_the_premise_is_that_git_really_prints_the_zero_sha(self):
+        """If a future git stops using the all-zeros marker, this test says
+        so instead of the filter above passing for the wrong reason."""
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_commented_out(tmp)
+            target = os.path.join(info["repo"], "billing.py")
+            with open(target, encoding="utf-8") as fh:
+                text = fh.read()
+            with open(target, "w", encoding="utf-8") as fh:
+                fh.write(text.replace("range(3)", "range(9)"))
+
+            raw = gitq.run_git(info["repo"],
+                               gitq.blame_args("billing.py", 3, 3))
+            self.assertIn(gitq.ZERO_SHA, raw)
+
+
 if __name__ == "__main__":
     unittest.main()
