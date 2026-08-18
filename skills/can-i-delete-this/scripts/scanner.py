@@ -114,8 +114,8 @@ class Block:
     `lines` is the span, blank comment lines included. `code_lines` is how
     many of them looked like code, which is what the ratio was judged on.
     `excerpt` is up to `EXCERPT_LINES` of the block's own non-blank text,
-    each cut at `EXCERPT_MAX_CHARS`, comment marker and leading asterisks
-    stripped and nothing else: not normalized, not summarized.
+    each cut at `EXCERPT_MAX_CHARS`, comment marker, leading asterisks and
+    indentation stripped and nothing else: not normalized, not summarized.
     """
     start: int
     end: int

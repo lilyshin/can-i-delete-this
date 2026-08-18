@@ -30,7 +30,7 @@ the current working directory's repository just because it is current.
 
 Show the checklist. Pass `--lang ko` for a Korean user, and so on.
 
-Then say four things, in the user's language:
+Then say three things, in the user's language:
 
 1. How many candidates, and the scan scope from `limits` (files scanned,
    files skipped and why). If `candidate_cap_reached` is true, say the list
@@ -42,11 +42,6 @@ Then say four things, in the user's language:
    the code, and the same commit may turn out to be a formatter.
 3. That nothing here is graded, and that grading one means
    `/can-i-delete-this:check <path>:<start>-<end>`.
-4. When helping the user choose which candidate to look at, point them at
-   each item's excerpt, not only its commit line. Several candidates can
-   share one blame commit: a real scan returned 43 candidates of which 40
-   traced to the same commit, so the commit line could not tell those 40
-   apart and the block's own text was the only thing that could.
 
 ## 3. Do not grade the list yourself
 
@@ -56,3 +51,9 @@ target workflow in `skills/can-i-delete-this/SKILL.md`, which the user
 starts by picking an item. Producing a list of plausible-looking "safe"
 judgements that nobody verified is the failure this project exists to
 prevent.
+
+When the user asks which candidate to look at, point them at each item's
+excerpt, not only its commit line. Several candidates can share one blame
+commit: a real scan returned 43 candidates of which 40 traced to the same
+commit, so the commit line could not tell those 40 apart and the block's
+own text was the only thing that could.

@@ -58,12 +58,12 @@ what this is and that nobody restored it.
 
 Each candidate also carries an excerpt: up to `EXCERPT_LINES` lines of the
 block's own text, each cut at `EXCERPT_MAX_CHARS` characters, comment
-markers and leading asterisks stripped and nothing else, not normalized,
-not summarized. It exists because the commit line can stop being useful
-for telling candidates apart: measured against a real scan of an Elixir
-repository, 43 candidates shared blame commits so heavily that 40 of them
-traced to one 142-file merge, and the commit line alone could not tell
-those 40 apart. Only the block's own text can.
+markers, leading asterisks and indentation stripped and nothing else, not
+normalized, not summarized. It exists because the commit line can stop
+being useful for telling candidates apart: measured against a real scan
+of an Elixir repository, 43 candidates shared blame commits so heavily
+that 40 of them traced to one 142-file merge, and the commit line alone
+could not tell those 40 apart. Only the block's own text can.
 
 That means the excerpt puts real code into the checklist, not a
 description of it. Pasting that checklist into an issue moves that code
