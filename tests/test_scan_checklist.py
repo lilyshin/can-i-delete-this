@@ -18,7 +18,9 @@ def _scan_data(candidates=None, **limits):
         "target": {"repo": "/tmp/r", "path": "src/billing"},
         "candidates": candidates if candidates is not None else [_candidate()],
         "limits": base,
-        "notes": ["block comments (/* ... */) are not detected; only line comments"],
+        "notes": ["block comments (/* ... */) are detected for C-family "
+                   "languages and sql; doc comments (/** ... */) are "
+                   "discarded whole"],
     }
 
 
@@ -180,9 +182,28 @@ class TestChecklistShape(unittest.TestCase):
         self.assertIn("      | for attempt in range(3):", out)
         self.assertIn("      > Gateway kept returning 502", out)
 
+    def test_excerpt_comes_before_the_commit_line(self):
+        """이 순서가 발췌 기능의 존재 이유다: 실측 스캔에서 후보 43건 중 40건이
+        같은 blame 커밋을 공유했고, 커밋 줄이 먼저 오면 읽는 사람의 눈이 똑같은
+        텍스트를 마흔 번 지나야 서로 다른 것에 닿는다. 순서를 단정하지 않으면
+        발췌 루프를 힌트 아래로 옮겨도 테스트가 전부 통과한다."""
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(excerpt=["for attempt in range(3):"])]))
+        lines = out.splitlines()
+        excerpt_at = lines.index("      | for attempt in range(3):")
+        item_at = next(i for i, l in enumerate(lines) if l.startswith("- [ ] "))
+        commit_at = next(i for i, l in enumerate(lines) if "1a2b3c4" in l)
+        body_at = next(i for i, l in enumerate(lines)
+                       if "Gateway kept returning 502" in l)
+        self.assertLess(item_at, excerpt_at)
+        self.assertLess(excerpt_at, commit_at)
+        self.assertLess(commit_at, body_at)
+
     def test_no_excerpt_key_means_no_excerpt_line(self):
-        c = _candidate()
-        c.pop("excerpt", None)
+        c = _candidate(excerpt=["for attempt in range(3):"])
+        # popped rather than never set, so the assertion below is about the
+        # key being absent and not about the factory's defaults
+        self.assertIsInstance(c.pop("excerpt"), list)
         out = artifacts.scan_checklist(_scan_data(candidates=[c]))
         self.assertNotIn("      | ", out)
 
@@ -203,6 +224,32 @@ class TestChecklistShape(unittest.TestCase):
             candidates=[_candidate(excerpt=[42, None, "  ", "real line"])]))
         self.assertIn("      | real line", out)
         self.assertNotIn("      | 42", out)
+
+    def test_truncated_excerpt_is_marked(self):
+        """잘린 발췌를 잘렸다고 말하지 않으면 120자에서 끊긴 줄이 파일에 있는
+        줄 전체로 읽힌다. 커밋 본문은 이미 같은 고백을 한다."""
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(excerpt=["for attempt in range(3):"],
+                                    excerpt_truncated=True)]))
+        self.assertIn("      | (excerpt truncated", out)
+
+    def test_untruncated_excerpt_is_not_marked(self):
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(excerpt=["for attempt in range(3):"],
+                                    excerpt_truncated=False)]))
+        self.assertNotIn("excerpt truncated", out)
+
+    def test_truncation_marker_needs_an_excerpt_to_mark(self):
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(excerpt=[], excerpt_truncated=True)]))
+        self.assertNotIn("      | ", out)
+
+    def test_excerpt_disclosure_travels_with_the_checklist(self):
+        """발췌는 실제 소스 코드이고 이 체크리스트는 붙여넣기 위한 것이다. 그
+        사실은 에이전트가 읽는 참고 파일이 아니라 붙여넣는 사람 눈앞에
+        있어야 한다."""
+        out = artifacts.scan_checklist(_scan_data())
+        self.assertIn("source code copied from the scanned repository", out)
 
     def test_truncated_body_is_marked(self):
         commit = _candidate()["commented_out_by"]
@@ -232,11 +279,15 @@ class TestKorean(unittest.TestCase):
             lang="ko")
         self.assertIn("      | for attempt in range(3):", out)
 
-    def test_excerpt_text_is_not_translated_in_english(self):
+    def test_truncated_excerpt_is_marked_in_korean_too(self):
         out = artifacts.scan_checklist(_scan_data(
-            candidates=[_candidate(excerpt=["for attempt in range(3):"])]),
-            lang="en")
-        self.assertIn("      | for attempt in range(3):", out)
+            candidates=[_candidate(excerpt=["for attempt in range(3):"],
+                                    excerpt_truncated=True)]), lang="ko")
+        self.assertIn("      | (발췌 잘림", out)
+
+    def test_excerpt_disclosure_exists_in_korean_too(self):
+        out = artifacts.scan_checklist(_scan_data(), lang="ko")
+        self.assertIn("스캔한 저장소에서 그대로 가져온 소스 코드", out)
 
 
 if __name__ == "__main__":

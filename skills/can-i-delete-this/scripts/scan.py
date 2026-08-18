@@ -209,6 +209,9 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
                 "lines": block.lines,
                 "code_lines": block.code_lines,
                 "excerpt": list(block.excerpt),
+                # Same disclosure the commit body already gets: a cut the
+                # reader cannot see is a cut the reader will read as whole.
+                "excerpt_truncated": block.excerpt_truncated,
                 "commented_out_by": commit,
                 "touched_by_commits": touched,
                 "look_first": bool(commit) and _looks_urgent(commit),

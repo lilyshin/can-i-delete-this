@@ -104,6 +104,8 @@ _STRINGS = {
         "scan.item_meta": "{lines} lines, commented out {age} days ago",
         "scan.item_meta_unknown": "{lines} lines, commenting commit unknown",
         "scan.body_truncated": "(body truncated; `git show {sha}` for the rest)",
+        "scan.excerpt_truncated": "(excerpt truncated; open the file at those "
+                                   "lines for the rest)",
         "scan.touched_by": "{count} commits touched these lines; the oldest is shown",
         "scan.hints": "about that commit: {hints}",
         "scan.scope": "Scan scope: {scanned} of {total} files "
@@ -115,6 +117,10 @@ _STRINGS = {
         "scan.boundary": "Block comments (`/* ... */`) are detected for "
                           "C-family languages and sql; doc comments "
                           "(`/** ... */`) are discarded whole.",
+        "scan.excerpt_disclosure": "Excerpt lines (`|`) are source code copied "
+                                    "from the scanned repository, so pasting "
+                                    "this checklist anywhere takes that code "
+                                    "with it.",
     },
     "ko": {
         "label.grade": "등급",
@@ -177,6 +183,7 @@ _STRINGS = {
         "scan.item_meta": "{lines}줄, {age}일 전에 주석 처리됨",
         "scan.item_meta_unknown": "{lines}줄, 주석 처리한 커밋을 알 수 없음",
         "scan.body_truncated": "(본문 잘림, 나머지는 `git show {sha}`)",
+        "scan.excerpt_truncated": "(발췌 잘림, 나머지는 파일의 해당 줄에서 확인하세요)",
         "scan.touched_by": "이 줄들을 건드린 커밋이 {count}개이고 가장 오래된 것을 보여줍니다",
         "scan.hints": "그 커밋에 대해: {hints}",
         "scan.scope": "스캔 범위: 전체 {total}개 파일 중 {scanned}개 "
@@ -186,6 +193,9 @@ _STRINGS = {
         "scan.cap": "후보 상한 {cap}에 도달했습니다. 더 있을 수 있습니다.",
         "scan.boundary": "블록 주석(`/* ... */`)은 C 계열 언어와 sql에서 감지합니다. "
                           "문서 주석(`/** ... */`)은 전부 버립니다.",
+        "scan.excerpt_disclosure": "발췌 줄(`|`)은 스캔한 저장소에서 그대로 가져온 소스 "
+                                    "코드이므로, 이 체크리스트를 어딘가에 붙여넣으면 그 "
+                                    "코드도 함께 옮겨집니다.",
     },
 }
 
@@ -580,6 +590,11 @@ def scan_checklist(scan_data, *, lang="en"):
             if isinstance(raw_excerpt, list) else []
         for excerpt_line in excerpt_lines:
             lines.append("      | " + excerpt_line)
+        # An excerpt line cut at the scanner's per-line limit says so, the
+        # same way the commit body does. An undisclosed cut reads as a
+        # whole line, and the reader acts on a line the file does not have.
+        if excerpt_lines and candidate.get("excerpt_truncated"):
+            lines.append("      | " + _t(lang, "scan.excerpt_truncated"))
 
         sha = commit.get("sha") or ""
         if sha:
@@ -616,6 +631,11 @@ def scan_checklist(scan_data, *, lang="en"):
     if limits.get("candidate_cap_reached"):
         lines.append(_t(lang, "scan.cap", cap=limits.get("max_candidates")))
     lines.append(_t(lang, "scan.boundary"))
+    # The excerpt carries real code out of the repository, and this
+    # checklist exists to be pasted somewhere else. Whoever pastes it is
+    # the person who needs to know that, so the sentence travels with the
+    # artifact instead of living only in a reference file an agent reads.
+    lines.append(_t(lang, "scan.excerpt_disclosure"))
     return "\n".join(lines)
 
 

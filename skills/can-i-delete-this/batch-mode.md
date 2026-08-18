@@ -58,18 +58,26 @@ what this is and that nobody restored it.
 
 Each candidate also carries an excerpt: up to `EXCERPT_LINES` lines of the
 block's own text, each cut at `EXCERPT_MAX_CHARS` characters, comment
-markers, leading asterisks and indentation stripped and nothing else, not
+markers, a leading asterisk and indentation stripped and nothing else, not
 normalized, not summarized. It exists because the commit line can stop
 being useful for telling candidates apart: measured against a real scan
 of an Elixir repository, 43 candidates shared blame commits so heavily
 that 40 of them traced to one 142-file merge, and the commit line alone
-could not tell those 40 apart. Only the block's own text can.
+could not tell those 40 apart. Only the block's own text can. The excerpt
+is rendered above the commit line for that reason, and the checklist test
+suite asserts that order rather than only the presence of both.
+
+When that per-line cut removed anything, the candidate carries
+`excerpt_truncated` and the checklist says so under the excerpt, the same
+disclosure `body_truncated` already makes for a commit body. An
+undisclosed cut reads as the whole line.
 
 That means the excerpt puts real code into the checklist, not a
 description of it. Pasting that checklist into an issue moves that code
 along with it. That is a path by which private code reaches a public
-issue tracker, and whoever pastes the checklist should know it before
-they do.
+issue tracker, so the rendered checklist says it in one line beside the
+boundary note: the person who pastes it is the person who needs to know,
+and they may never have read this file.
 
 ## Workflow
 
@@ -94,15 +102,30 @@ they do.
   string literal, is not seen as an opener, since commented-out code
   almost always starts a line.
 - A region opened with `/**` is a doc comment. It is discarded whole,
-  never split into runs and never reported as a candidate.
+  never split into runs and never reported as a candidate. The
+  line-comment doc styles `///` and `//!` get no such treatment: they
+  start with the line-comment marker, so `/// let x = foo();` can be
+  reported as a candidate. Only the `/**` exclusion was measured.
 - Nesting inside a block comment is not tracked: the first close marker
   found ends the region.
 - The check that keeps a close marker from matching inside a string
-  literal counts quote characters on that one physical line only. A
-  string literal that itself spans several lines, a Kotlin text block, a
+  literal counts double quotes (`"`) on that one physical line only, and
+  nothing else. A single-quoted string holding the close marker is not
+  protected: `val c = '*/'` ends the region. Only `"` is counted because
+  counting `'` too made an apostrophe in ordinary prose (`unless there's
+  an error */`) leave the region open, and the region then ran on over the
+  live code below it, which is the more expensive mistake by measurement.
+  A string literal that itself spans several lines, a Kotlin text block, a
   C# verbatim string, a multi-line SQL or PHP literal, resets that count
   at every line break, so a `*/` that is really still inside the literal
   can end the region early.
+- A `_NOT_CODE` line (a TODO, an annotation, a license header, a URL)
+  inside a region ends the run there, and the run reported then covers its
+  own content lines only: the region's `/*` and `*/` lines are not
+  attached to it, because deleting the reported span must not leave the
+  region unterminated. The span does reach the closing line when that line
+  carries body text before its `*/`, so a range printed that way includes
+  the close marker and whatever follows it on that line.
 - Code inside a comment that is documentation, a usage example, can be
   reported as a candidate. Reading its diff is what tells them apart.
 - A language absent from `scanner.COMMENT_MARKERS` is not scanned, block
