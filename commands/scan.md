@@ -34,10 +34,12 @@ Then say three things, in the user's language:
 
 1. How many candidates, and the scan scope from `limits` (files scanned,
    files skipped and why). If `candidate_cap_reached` is true, say the list
-   is partial, say how many files `files_not_reached` was never opened at
-   all, and offer to rerun with a higher `--max-candidates`.
-2. Which candidates are marked `look_first` and why (the commenting commit
-   mentions an incident, a revert or a temporary disable).
+   is partial, report `files_not_reached` as the number of files that were
+   never opened, and offer to rerun with a higher `--max-candidates`.
+2. Which candidates are marked `look_first` and why: the commit blame
+   attributes to those lines mentions an incident, a revert or a temporary
+   disable. That is a reading of the subject and body, not a finding about
+   the code, and the same commit may turn out to be a formatter.
 3. That nothing here is graded, and that grading one means
    `/can-i-delete-this:check <path>:<start>-<end>`.
 
