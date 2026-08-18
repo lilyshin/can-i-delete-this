@@ -369,6 +369,57 @@ class TestBlockComments(unittest.TestCase):
         blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
         self.assertEqual(len(blocks), 1)
 
+    def test_closer_inside_a_string_literal_is_not_a_closer(self):
+        """문자열 리터럴 안의 `*/`가 영역을 조기 종료시키면 안 된다.
+        진짜 닫는 마커는 5번째 줄이고, 블록은 거기까지 이어져야 한다."""
+        text = (
+            "/*\n"
+            "a = one()\n"
+            'val s = "*/"\n'
+            "c = three()\n"
+            "*/\n"
+        )
+        blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual((blocks[0].start, blocks[0].end), (1, 5))
+
+    def test_closer_sharing_its_line_with_code_still_closes(self):
+        """따옴표가 없으면 코드와 같은 줄의 닫는 마커도 정상적으로 닫는다."""
+        text = (
+            "/*\n"
+            "a = one()\n"
+            "b = two()\n"
+            "y = 2 */\n"
+            "val live = 1\n"
+        )
+        blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual((blocks[0].start, blocks[0].end), (1, 4))
+
+    def test_closer_after_an_even_number_of_quotes_still_closes(self):
+        """마커 앞의 따옴표 개수가 짝수면 문자열 밖이므로 정상적으로 닫는다."""
+        text = (
+            "/*\n"
+            "a = one()\n"
+            "b = two()\n"
+            'val a = "x"; val b = "y" */\n'
+            "val live = 1\n"
+        )
+        blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual((blocks[0].start, blocks[0].end), (1, 4))
+
+    def test_openers_own_content_has_the_leading_asterisk_stripped(self):
+        """여는 줄 자체에 실린 본문도 다른 줄과 같은 취급을 받아야 한다."""
+        text = (
+            "/* * x = one()\n"
+            "y = two()\n"
+            "z = three()\n"
+            "*/\n"
+        )
+        block = scanner.find_blocks(text, "//", block=self.BLOCK)[0]
+        self.assertEqual(block.excerpt, ("x = one()", "y = two()"))
+
 
 if __name__ == "__main__":
     unittest.main()

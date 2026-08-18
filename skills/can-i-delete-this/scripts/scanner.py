@@ -30,6 +30,24 @@ discarded whole: measured against a 1710-file Kotlin repository, 3 `/* */`
 regions were code-shaped candidates and 6 `/** */` doc comments were also
 code-shaped text; without the `/**` exclusion this feature would have
 produced twice as many false candidates as real ones.
+
+Declared boundaries of the block-comment scan, so a reader does not have
+to rediscover them:
+
+- Nesting is not tracked. The first close marker found ends the region,
+  the same no-parser stance as everywhere else in this module.
+- A candidate close marker preceded on its line by an odd number of quote
+  characters (`"` or `'`) is assumed to sit inside a string literal and is
+  skipped for the next one. This is a heuristic, not a parser: an escaped
+  quote inside a string will fool it.
+- Text outside the markers on the opening and closing lines, including
+  any code that follows a close marker on its own line, is not part of
+  the body and is not re-examined as code or as a new comment.
+- The reported span reaches back to the opening line and forward to the
+  closing line only when the region closes without an interior run being
+  cut short by `_NOT_CODE` first. A `_NOT_CODE` line that ends a run
+  before the true closer is reached reports only that run's own content
+  lines; the region's marker lines are not retroactively attached to it.
 """
 
 import re
@@ -136,6 +154,23 @@ def _strip_block_prefix(text):
     return text[1:] if text.startswith("*") else text
 
 
+def _closer_index(text, close_marker):
+    """Position of the first `close_marker` in `text` that is not sitting
+    inside a string literal, or -1 if there is none. A candidate is
+    treated as being inside a string when the text before it holds an odd
+    number of quote characters (`"` or `'`); that candidate is skipped and
+    the search continues for the next one."""
+    start = 0
+    while True:
+        idx = text.find(close_marker, start)
+        if idx == -1:
+            return -1
+        quotes = text.count('"', 0, idx) + text.count("'", 0, idx)
+        if quotes % 2 == 0:
+            return idx
+        start = idx + len(close_marker)
+
+
 def _emit(run, blocks, min_lines, ratio):
     """Turn one finished comment run into a Block, or drop it."""
     if len(run) < min_lines:
@@ -187,7 +222,7 @@ def find_blocks(text, marker, *, block=None, min_lines=MIN_BLOCK_LINES,
         stripped = line.strip()
 
         if in_block:
-            close_idx = stripped.find(close_marker)
+            close_idx = _closer_index(stripped, close_marker)
             if close_idx != -1:
                 before = _strip_block_prefix(stripped[:close_idx])
                 closed_here = bool(before.strip())
@@ -229,14 +264,14 @@ def find_blocks(text, marker, *, block=None, min_lines=MIN_BLOCK_LINES,
             line_run = []
             after_open = stripped[len(open_marker):]
             is_doc = after_open.startswith("*")
-            close_idx = after_open.find(close_marker)
+            close_idx = _closer_index(after_open, close_marker)
             if close_idx != -1:
                 # Opens and closes on the same line: one line of body,
                 # always below min_lines. No special-case drop needed;
                 # _emit rejects it the same way it rejects any short run.
                 if not is_doc:
-                    _emit([(lineno, after_open[:close_idx])], blocks,
-                          min_lines, ratio)
+                    body = _strip_block_prefix(after_open[:close_idx].lstrip())
+                    _emit([(lineno, body)], blocks, min_lines, ratio)
                 continue
             in_block = True
             block_is_doc = is_doc
@@ -244,7 +279,8 @@ def find_blocks(text, marker, *, block=None, min_lines=MIN_BLOCK_LINES,
             region_first_run = True
             opener_has_content = bool(after_open.strip())
             if opener_has_content and not is_doc:
-                block_run = [(lineno, after_open)]
+                opener_body = _strip_block_prefix(after_open.lstrip())
+                block_run = [(lineno, opener_body)]
             else:
                 block_run = []
             continue
