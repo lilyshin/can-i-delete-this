@@ -24,8 +24,12 @@ nobody looks at again:
 - `looks_like_code` is not a parser. It asks whether the text carries
   syntax a sentence would not.
 
-Known boundary, disclosed rather than worked around: block comments
-(`/* ... */`) are not detected. Only line comments.
+Block comments (`/* ... */`) are found too, when `find_blocks` is given a
+`block` marker pair. A doc comment (a region opened with `/**`) is always
+discarded whole: measured against a 1710-file Kotlin repository, 3 `/* */`
+regions were code-shaped candidates and 6 `/** */` doc comments were also
+code-shaped text; without the `/**` exclusion this feature would have
+produced twice as many false candidates as real ones.
 """
 
 import re
@@ -44,6 +48,15 @@ COMMENT_MARKERS = {
     "lua": "--", "sql": "--", "hs": "--", "elm": "--",
 }
 
+# One block-comment marker pair per file extension, for languages that
+# have `/* ... */` on top of (or instead of) a line-comment marker. An
+# extension absent from this table has no block-comment scanning at all.
+BLOCK_MARKERS = {
+    ext: ("/*", "*/")
+    for ext in ("kt kts java js jsx ts tsx go c h cc cpp hpp cs rs scala "
+                "swift dart php sql").split()
+}
+
 # A comment run shorter than this is not a candidate. Two commented lines
 # are as often a note as they are dead code.
 MIN_BLOCK_LINES = 3
@@ -51,6 +64,13 @@ MIN_BLOCK_LINES = 3
 # Of the run's non-blank comment lines, at least this fraction must look
 # like code.
 CODE_SHAPE_RATIO = 0.7
+
+# How much of a block's own text rides along with it. Measured against a
+# real scan of an Elixir repository: 43 candidates shared blame commits so
+# heavily that 40 of them traced to one 142-file merge; the commit line
+# alone could not tell those 40 apart; only the block's own text can.
+EXCERPT_LINES = 2
+EXCERPT_MAX_CHARS = 120
 
 _CODE_SHAPE = (
     re.compile(r"[A-Za-z_][A-Za-z0-9_]*\s*\("),
@@ -75,11 +95,15 @@ class Block:
 
     `lines` is the span, blank comment lines included. `code_lines` is how
     many of them looked like code, which is what the ratio was judged on.
+    `excerpt` is up to `EXCERPT_LINES` of the block's own non-blank text,
+    each cut at `EXCERPT_MAX_CHARS`, comment marker and leading asterisks
+    stripped and nothing else: not normalized, not summarized.
     """
     start: int
     end: int
     lines: int
     code_lines: int
+    excerpt: tuple = ()
 
 
 def marker_for(path):
@@ -91,9 +115,25 @@ def marker_for(path):
     return COMMENT_MARKERS.get(name.rsplit(".", 1)[-1].lower())
 
 
+def block_markers_for(path):
+    """The `(open, close)` block-comment marker pair for `path`, or None
+    when the extension is not in `BLOCK_MARKERS`."""
+    name = path.rsplit("/", 1)[-1]
+    if "." not in name:
+        return None
+    return BLOCK_MARKERS.get(name.rsplit(".", 1)[-1].lower())
+
+
 def looks_like_code(text):
     """True when `text` carries syntax prose would not."""
     return any(pattern.search(text) for pattern in _CODE_SHAPE)
+
+
+def _strip_block_prefix(text):
+    """The body of one line inside a `/* ... */` region: a leading `*`,
+    the usual continuation style for these comments, is removed. Anything
+    else is left exactly as it appears in the file."""
+    return text[1:] if text.startswith("*") else text
 
 
 def _emit(run, blocks, min_lines, ratio):
@@ -106,26 +146,117 @@ def _emit(run, blocks, min_lines, ratio):
         return
     if len(code) < len(content) * ratio:
         return
+    excerpt = tuple(text.strip()[:EXCERPT_MAX_CHARS]
+                     for text in content[:EXCERPT_LINES])
     blocks.append(Block(start=run[0][0], end=run[-1][0], lines=len(run),
-                        code_lines=len(code)))
+                        code_lines=len(code), excerpt=excerpt))
 
 
-def find_blocks(text, marker, *, min_lines=MIN_BLOCK_LINES,
+def find_blocks(text, marker, *, block=None, min_lines=MIN_BLOCK_LINES,
                 ratio=CODE_SHAPE_RATIO):
-    """Every run of commented-out code in `text`, in line order."""
+    """Every run of commented-out code in `text`, in line order.
+
+    `marker` finds runs of line comments, as before. `block`, given as an
+    `(open, close)` pair such as `("/*", "*/")`, additionally finds runs
+    inside block comments; whatever either scan finds is merged and
+    returned in line order. `block=None`, the default, keeps the old
+    line-comments-only behaviour.
+
+    A block-comment region opens only when a stripped line starts with
+    the open marker: `/*` elsewhere on a line, including inside a string
+    literal, is ignored, since commented-out code almost always starts a
+    line. A region opened with `/**` is a doc comment; it is discarded
+    whole rather than split into runs. Nesting is not tracked: the first
+    close marker found ends the region, matching this module's no-parser
+    stance everywhere else. Text outside the markers on the opening and
+    closing lines, including any code that follows a close marker on its
+    own line, is not part of the body and is not re-examined.
+    """
+    open_marker, close_marker = block if block is not None else (None, None)
+
     blocks = []
-    run = []
+    line_run = []
+    block_run = []
+    in_block = False
+    block_is_doc = False
+    region_open_line = None
+    region_first_run = True
+    opener_has_content = False
+
     for lineno, line in enumerate(text.splitlines(), 1):
         stripped = line.strip()
-        if stripped.startswith(marker):
+
+        if in_block:
+            close_idx = stripped.find(close_marker)
+            if close_idx != -1:
+                before = _strip_block_prefix(stripped[:close_idx])
+                closed_here = bool(before.strip())
+                if closed_here:
+                    block_run.append((lineno, before))
+                if not block_is_doc:
+                    if region_first_run and not opener_has_content:
+                        block_run.insert(0, (region_open_line, ""))
+                    if not closed_here:
+                        block_run.append((lineno, ""))
+                    _emit(block_run, blocks, min_lines, ratio)
+                in_block = False
+                block_run = []
+                region_first_run = True
+                opener_has_content = False
+                continue
+            if block_is_doc:
+                continue
+            body = _strip_block_prefix(stripped)
+            if _NOT_CODE.match(body):
+                _emit(block_run, blocks, min_lines, ratio)
+                block_run = []
+                region_first_run = False
+                continue
+            block_run.append((lineno, body))
+            continue
+
+        if marker and stripped.startswith(marker):
             body = stripped[len(marker):]
             if _NOT_CODE.match(body):
-                _emit(run, blocks, min_lines, ratio)
-                run = []
+                _emit(line_run, blocks, min_lines, ratio)
+                line_run = []
                 continue
-            run.append((lineno, body))
+            line_run.append((lineno, body))
             continue
-        _emit(run, blocks, min_lines, ratio)
-        run = []
-    _emit(run, blocks, min_lines, ratio)
+
+        if open_marker and stripped.startswith(open_marker):
+            _emit(line_run, blocks, min_lines, ratio)
+            line_run = []
+            after_open = stripped[len(open_marker):]
+            is_doc = after_open.startswith("*")
+            close_idx = after_open.find(close_marker)
+            if close_idx != -1:
+                # Opens and closes on the same line: one line of body,
+                # always below min_lines. No special-case drop needed;
+                # _emit rejects it the same way it rejects any short run.
+                if not is_doc:
+                    _emit([(lineno, after_open[:close_idx])], blocks,
+                          min_lines, ratio)
+                continue
+            in_block = True
+            block_is_doc = is_doc
+            region_open_line = lineno
+            region_first_run = True
+            opener_has_content = bool(after_open.strip())
+            if opener_has_content and not is_doc:
+                block_run = [(lineno, after_open)]
+            else:
+                block_run = []
+            continue
+
+        _emit(line_run, blocks, min_lines, ratio)
+        line_run = []
+
+    _emit(line_run, blocks, min_lines, ratio)
+    if in_block and not block_is_doc:
+        if region_first_run and not opener_has_content:
+            block_run.insert(0, (region_open_line, ""))
+        _emit(block_run, blocks, min_lines, ratio)
+
+    blocks.sort(key=lambda found: found.start)
     return blocks

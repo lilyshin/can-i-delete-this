@@ -211,5 +211,164 @@ class TestLooksLikeCode(unittest.TestCase):
         self.assertFalse(scanner.looks_like_code(""))
 
 
+class TestExcerpt(unittest.TestCase):
+
+    def test_block_carries_the_first_two_nonblank_lines(self):
+        text = (
+            "// fun dead(o: Order) {\n"
+            "//\n"
+            "//     o.charge()\n"
+            "//     return null\n"
+            "// }\n"
+        )
+        block = scanner.find_blocks(text, "//")[0]
+        self.assertEqual(block.excerpt,
+                          ("fun dead(o: Order) {", "o.charge()"))
+
+    def test_excerpt_skips_blank_comment_lines(self):
+        text = "//\n// x = one()\n// y = two()\n// z = three()\n"
+        block = scanner.find_blocks(text, "//")[0]
+        self.assertEqual(block.excerpt, ("x = one()", "y = two()"))
+
+    def test_excerpt_lines_are_cut_at_the_character_limit(self):
+        long_line = "x = " + "a" * 400
+        text = "// {}\n// y = two()\n// z = three()\n".format(long_line)
+        block = scanner.find_blocks(text, "//")[0]
+        self.assertEqual(len(block.excerpt[0]), scanner.EXCERPT_MAX_CHARS)
+        self.assertTrue(block.excerpt[0].startswith("x = aaa"))
+
+    def test_excerpt_is_text_from_the_file_not_a_summary(self):
+        """발췌는 파일에 실제로 있는 텍스트여야 한다."""
+        text = "// alpha = 1\n// beta = 2\n// gamma = 3\n"
+        block = scanner.find_blocks(text, "//")[0]
+        for line in block.excerpt:
+            self.assertIn(line, text)
+
+
+class TestBlockMarkers(unittest.TestCase):
+
+    def test_c_family_has_block_markers(self):
+        self.assertEqual(scanner.block_markers_for("a/Foo.kt"), ("/*", "*/"))
+        self.assertEqual(scanner.block_markers_for("a/foo.ts"), ("/*", "*/"))
+
+    def test_languages_without_block_comments_have_none(self):
+        for path in ("a/foo.py", "a/foo.ex", "a/foo.rb", "a/foo.sh",
+                      "a/foo.yml"):
+            self.assertIsNone(scanner.block_markers_for(path), path)
+
+    def test_unsupported_extension_has_none(self):
+        self.assertIsNone(scanner.block_markers_for("a/foo.rst"))
+
+
+class TestBlockComments(unittest.TestCase):
+
+    BLOCK = ("/*", "*/")
+
+    def test_block_comment_of_code_is_found(self):
+        text = (
+            "fun live() = 1\n"
+            "/*\n"
+            "fun dead(o: Order) {\n"
+            "    o.charge()\n"
+            "    return null\n"
+            "}\n"
+            "*/\n"
+        )
+        blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual((blocks[0].start, blocks[0].end), (2, 7))
+        self.assertEqual(blocks[0].excerpt,
+                          ("fun dead(o: Order) {", "o.charge()"))
+
+    def test_doc_comment_is_never_a_block(self):
+        """KDoc은 설명이지 지우다 만 코드가 아니다. 이걸 걸러내지 않으면
+        실측 기준 오탐이 진짜 후보의 두 배가 된다."""
+        text = (
+            "/**\n"
+            " * fun example(o: Order) {\n"
+            " *     o.charge()\n"
+            " *     return null\n"
+            " * }\n"
+            " */\n"
+            "fun live() = 1\n"
+        )
+        self.assertEqual(scanner.find_blocks(text, "//", block=self.BLOCK), [])
+
+    def test_opener_must_start_the_line(self):
+        """문자열 리터럴 안의 여는 마커가 유령 영역을 열면 안 된다."""
+        text = (
+            'val url = "http://example.com/*"\n'
+            "val a = compute()\n"
+            "val b = compute()\n"
+            "val c = compute()\n"
+        )
+        self.assertEqual(scanner.find_blocks(text, "//", block=self.BLOCK), [])
+
+    def test_leading_asterisks_are_stripped_from_the_body(self):
+        text = (
+            "/*\n"
+            " * x = one()\n"
+            " * y = two()\n"
+            " * z = three()\n"
+            " */\n"
+        )
+        block = scanner.find_blocks(text, "//", block=self.BLOCK)[0]
+        self.assertEqual(block.excerpt, ("x = one()", "y = two()"))
+
+    def test_single_line_block_comment_is_below_the_floor(self):
+        text = "/* x = one() */\nval live = 1\n"
+        self.assertEqual(scanner.find_blocks(text, "//", block=self.BLOCK), [])
+
+    def test_prose_block_comment_is_not_a_block(self):
+        text = (
+            "/*\n"
+            "we kept this around while the migration was in flight and\n"
+            "nobody has looked at it since then, ask the platform team\n"
+            "before changing any of this please\n"
+            "*/\n"
+        )
+        self.assertEqual(scanner.find_blocks(text, "//", block=self.BLOCK), [])
+
+    def test_todo_inside_a_block_comment_ends_the_run(self):
+        text = (
+            "/*\n"
+            "a = one()\n"
+            "b = two()\n"
+            "c = three()\n"
+            "TODO: revisit\n"
+            "d = four()\n"
+            "*/\n"
+        )
+        blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual((blocks[0].start, blocks[0].end), (2, 4))
+
+    def test_line_and_block_comments_are_merged_in_line_order(self):
+        text = (
+            "/*\n"
+            "a = one()\n"
+            "b = two()\n"
+            "c = three()\n"
+            "*/\n"
+            "val live = 1\n"
+            "// d = four()\n"
+            "// e = five()\n"
+            "// f = six()\n"
+        )
+        blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
+        self.assertEqual([(b.start, b.end) for b in blocks],
+                          [(1, 5), (7, 9)])
+
+    def test_block_argument_absent_means_line_comments_only(self):
+        text = "/*\na = one()\nb = two()\nc = three()\n*/\n"
+        self.assertEqual(scanner.find_blocks(text, "//"), [])
+
+    def test_unterminated_block_comment_is_still_judged(self):
+        """닫는 마커 없이 파일이 끝나도 모은 것은 판정한다."""
+        text = "/*\na = one()\nb = two()\nc = three()\n"
+        blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
+        self.assertEqual(len(blocks), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
