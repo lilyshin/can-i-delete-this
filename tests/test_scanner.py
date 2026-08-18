@@ -237,6 +237,24 @@ class TestExcerpt(unittest.TestCase):
         self.assertEqual(len(block.excerpt[0]), scanner.EXCERPT_MAX_CHARS)
         self.assertTrue(block.excerpt[0].startswith("x = aaa"))
 
+    def test_a_cut_excerpt_line_is_flagged_as_truncated(self):
+        """잘린 것을 잘렸다고 말하지 않으면 읽는 사람은 그 줄이 전부라고 읽는다.
+        커밋 본문(body_truncated)이 이미 같은 방식으로 알린다."""
+        text = ("// x = " + "a" * 400 + "\n// y = two()\n// z = three()\n")
+        block = scanner.find_blocks(text, "//")[0]
+        self.assertTrue(block.excerpt_truncated)
+
+    def test_a_short_excerpt_is_not_flagged_as_truncated(self):
+        text = "// x = one()\n// y = two()\n// z = three()\n"
+        block = scanner.find_blocks(text, "//")[0]
+        self.assertFalse(block.excerpt_truncated)
+
+    def test_truncation_is_judged_on_the_shown_lines_only(self):
+        """발췌에 실리지 않은 뒷줄이 길다고 발췌가 잘린 것은 아니다."""
+        text = ("// x = one()\n// y = two()\n// z = " + "a" * 400 + "\n")
+        block = scanner.find_blocks(text, "//")[0]
+        self.assertFalse(block.excerpt_truncated)
+
     def test_excerpt_is_text_from_the_file_not_a_summary(self):
         """발췌는 파일에 실제로 있는 텍스트여야 한다."""
         text = "// alpha = 1\n// beta = 2\n// gamma = 3\n"
@@ -382,6 +400,75 @@ class TestBlockComments(unittest.TestCase):
         blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
         self.assertEqual(len(blocks), 1)
         self.assertEqual((blocks[0].start, blocks[0].end), (1, 5))
+
+    def test_prose_apostrophe_on_the_closing_line_still_closes(self):
+        """산문의 아포스트로피가 닫는 마커를 무효화하면 영역이 계속 이어져서
+        아래의 살아있는 코드까지 후보 span에 삼킨다. 실제 C 파일에서
+        `unless there's an error */` 한 줄이 live 코드 20줄을 끌어들였다."""
+        text = (
+            "/*\n"
+            "a = one()\n"
+            "b = two()\n"
+            "c = three()\n"
+            "we don't need this anymore */\n"
+            "fun live() = 1\n"
+            "val x = live()\n"
+            "val y = live()\n"
+        )
+        blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual((blocks[0].start, blocks[0].end), (1, 5))
+
+    def test_apostrophe_in_a_doc_comment_does_not_swallow_the_file(self):
+        """조용히 잃는 방향도 막아야 한다: `/**` 영역이 닫히지 않으면 뒤따르는
+        진짜 후보가 notes 한 줄 없이 사라진다."""
+        text = (
+            "/**\n"
+            " * Don't call this */\n"
+            "// a = f(1)\n"
+            "// b = f(2)\n"
+            "// c = f(3)\n"
+        )
+        blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
+        self.assertEqual([(b.start, b.end) for b in blocks], [(3, 5)])
+
+    def test_single_quoted_closer_is_not_protected(self):
+        """선언한 경계: 따옴표는 `"`만 센다. `'*/'`는 보호되지 않으므로 영역이
+        그 줄에서 끝난다. 산문의 아포스트로피 오탐보다 이 쪽이 훨씬 드물다."""
+        text = (
+            "/*\n"
+            "a = one()\n"
+            "b = two()\n"
+            "val c = '*/'\n"
+            "d = four()\n"
+            "*/\n"
+        )
+        blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual((blocks[0].start, blocks[0].end), (1, 4))
+
+    def test_a_run_cut_by_not_code_does_not_reach_the_closing_marker(self):
+        """보고한 span은 읽는 사람이 지울 범위다. `_NOT_CODE`가 끊은 런에
+        닫는 줄을 붙이면, 그 span을 지웠을 때 영역이 열린 채 남는다."""
+        text = (
+            "/*\n"
+            "TODO: revisit\n"
+            "d = f(4)\n"
+            "e = f(5)\n"
+            "g = f(6)\n"
+            "*/\n"
+        )
+        blocks = scanner.find_blocks(text, "//", block=self.BLOCK)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual((blocks[0].start, blocks[0].end, blocks[0].lines),
+                          (3, 5, 3))
+
+    def test_same_line_open_and_close_is_reported_at_min_lines_one(self):
+        """`--min-lines 1`에는 하한이 없다. 한 줄짜리 `/* x = one() */`도
+        후보로 나오는 것이 요청한 대로 동작하는 것이다."""
+        blocks = scanner.find_blocks("/* x = one() */\nval live = 1\n", "//",
+                                     block=self.BLOCK, min_lines=1)
+        self.assertEqual([(b.start, b.end) for b in blocks], [(1, 1)])
 
     def test_closer_sharing_its_line_with_code_still_closes(self):
         """따옴표가 없으면 코드와 같은 줄의 닫는 마커도 정상적으로 닫는다."""

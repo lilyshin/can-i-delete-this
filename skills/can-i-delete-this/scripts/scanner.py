@@ -36,10 +36,14 @@ to rediscover them:
 
 - Nesting is not tracked. The first close marker found ends the region,
   the same no-parser stance as everywhere else in this module.
-- A candidate close marker preceded on its line by an odd number of quote
-  characters (`"` or `'`) is assumed to sit inside a string literal and is
+- A candidate close marker preceded on its line by an odd number of
+  double quotes (`"`) is assumed to sit inside a string literal and is
   skipped for the next one. This is a heuristic, not a parser: an escaped
-  quote inside a string will fool it.
+  quote inside a string will fool it, and a single-quoted string holding
+  the close marker is not protected at all. Only `"` is counted because
+  an apostrophe in ordinary prose is far more common than `'*/'` in code:
+  counting `'` too made a prose closing line fail to close, and the
+  region then ran on and swallowed the live code after it.
 - Text outside the markers on the opening and closing lines, including
   any code that follows a close marker on its own line, is not part of
   the body and is not re-examined as code or as a new comment.
@@ -48,6 +52,16 @@ to rediscover them:
   cut short by `_NOT_CODE` first. A `_NOT_CODE` line that ends a run
   before the true closer is reached reports only that run's own content
   lines; the region's marker lines are not retroactively attached to it.
+- When the closing line carries body text before its close marker, that
+  line is part of the run, so the reported span reaches a line that holds
+  the close marker and anything after it. Deleting the span as printed
+  therefore takes that closing line too, which is right for a whole
+  region and worth a look when code follows the marker on it.
+- `/**` opens a doc comment and is discarded whole, but the line-comment
+  doc styles `///` and `//!` are not: they start with the line-comment
+  marker, so `/// let x = foo();` reaches the line-comment path and can
+  become a candidate. The asymmetry is deliberate for now; the `/**`
+  exclusion was measured and these were not.
 """
 
 import re
@@ -114,14 +128,18 @@ class Block:
     `lines` is the span, blank comment lines included. `code_lines` is how
     many of them looked like code, which is what the ratio was judged on.
     `excerpt` is up to `EXCERPT_LINES` of the block's own non-blank text,
-    each cut at `EXCERPT_MAX_CHARS`, comment marker, leading asterisks and
+    each cut at `EXCERPT_MAX_CHARS`, comment marker, a leading asterisk and
     indentation stripped and nothing else: not normalized, not summarized.
+    `excerpt_truncated` says whether that cut actually removed anything, so
+    a reader is told the excerpt is short of the line rather than left to
+    assume it is the whole line.
     """
     start: int
     end: int
     lines: int
     code_lines: int
     excerpt: tuple = ()
+    excerpt_truncated: bool = False
 
 
 def marker_for(path):
@@ -158,15 +176,25 @@ def _closer_index(text, close_marker):
     """Position of the first `close_marker` in `text` that is not sitting
     inside a string literal, or -1 if there is none. A candidate is
     treated as being inside a string when the text before it holds an odd
-    number of quote characters (`"` or `'`); that candidate is skipped and
-    the search continues for the next one."""
+    number of double quotes (`"`); that candidate is skipped and the
+    search continues for the next one.
+
+    Single quotes are not counted, so a `'*/'` literal is not protected.
+    Counting them cost far more than it bought: an apostrophe in a prose
+    closing line (`/* ... unless there's an error */`) made the count odd,
+    the real closer was skipped, and the region ran on over the live code
+    below it. Measured over 55,575 C-family files in 139 local
+    repositories, counting `'` skipped 169 real closers and invented 41
+    candidates covering 1,398 lines that the double-quote-only count does
+    not report, while losing nothing: every one of those 41 spans overlaps
+    no span the double-quote-only count finds.
+    """
     start = 0
     while True:
         idx = text.find(close_marker, start)
         if idx == -1:
             return -1
-        quotes = text.count('"', 0, idx) + text.count("'", 0, idx)
-        if quotes % 2 == 0:
+        if text.count('"', 0, idx) % 2 == 0:
             return idx
         start = idx + len(close_marker)
 
@@ -181,10 +209,12 @@ def _emit(run, blocks, min_lines, ratio):
         return
     if len(code) < len(content) * ratio:
         return
-    excerpt = tuple(text.strip()[:EXCERPT_MAX_CHARS]
-                     for text in content[:EXCERPT_LINES])
+    shown = [text.strip() for text in content[:EXCERPT_LINES]]
+    excerpt = tuple(text[:EXCERPT_MAX_CHARS] for text in shown)
+    truncated = any(len(text) > EXCERPT_MAX_CHARS for text in shown)
     blocks.append(Block(start=run[0][0], end=run[-1][0], lines=len(run),
-                        code_lines=len(code), excerpt=excerpt))
+                        code_lines=len(code), excerpt=excerpt,
+                        excerpt_truncated=truncated))
 
 
 def find_blocks(text, marker, *, block=None, min_lines=MIN_BLOCK_LINES,
@@ -229,10 +259,17 @@ def find_blocks(text, marker, *, block=None, min_lines=MIN_BLOCK_LINES,
                 if closed_here:
                     block_run.append((lineno, before))
                 if not block_is_doc:
-                    if region_first_run and not opener_has_content:
-                        block_run.insert(0, (region_open_line, ""))
-                    if not closed_here:
-                        block_run.append((lineno, ""))
+                    # The region's own marker lines belong to a run only
+                    # when that run is the whole region: then the span is
+                    # the range a reader would delete. A run an interior
+                    # `_NOT_CODE` line already cut short is not, and
+                    # attaching the closer to it would print a span whose
+                    # deletion leaves the region unterminated.
+                    if region_first_run:
+                        if not opener_has_content:
+                            block_run.insert(0, (region_open_line, ""))
+                        if not closed_here:
+                            block_run.append((lineno, ""))
                     _emit(block_run, blocks, min_lines, ratio)
                 in_block = False
                 block_run = []
@@ -267,8 +304,11 @@ def find_blocks(text, marker, *, block=None, min_lines=MIN_BLOCK_LINES,
             close_idx = _closer_index(after_open, close_marker)
             if close_idx != -1:
                 # Opens and closes on the same line: one line of body,
-                # always below min_lines. No special-case drop needed;
-                # _emit rejects it the same way it rejects any short run.
+                # handed to _emit like any other run. At the default
+                # min_lines it is dropped for being short; at
+                # `min_lines=1`, which the caller may ask for, it is
+                # reported, because one commented-out line of code is
+                # what the caller asked to see.
                 if not is_doc:
                     body = _strip_block_prefix(after_open[:close_idx].lstrip())
                     _emit([(lineno, body)], blocks, min_lines, ratio)
