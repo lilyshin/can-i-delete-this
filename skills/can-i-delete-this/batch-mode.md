@@ -6,13 +6,21 @@ ask that about". It grades nothing.
 
 ## What it looks for
 
-One signal: a block of commented-out code. A run of consecutive line
-comments, `MIN_BLOCK_LINES` or longer, where the lines that carry syntax
-prose would not also number `MIN_BLOCK_LINES` or more on their own, and
-where that count is at least `CODE_SHAPE_RATIO` of the non-blank comment
-lines. A run with enough blank comment lines mixed in can pass the length
-and ratio gates while still falling short on that middle count, and is
-dropped either way.
+One signal: a block of commented-out code, written either as a run of
+consecutive line comments or as a `/* ... */` block comment. Either shape
+answers to the same gates: `MIN_BLOCK_LINES` or longer, where the lines
+that carry syntax prose would not also number `MIN_BLOCK_LINES` or more on
+their own, and where that count is at least `CODE_SHAPE_RATIO` of the
+non-blank comment lines. A run with enough blank comment lines mixed in
+can pass the length and ratio gates while still falling short on that
+middle count, and is dropped either way.
+
+Block comments are scanned only for the extensions listed in
+`scanner.BLOCK_MARKERS` (the C-family languages, plus SQL). A region
+opened with `/**` is a doc comment and is discarded whole rather than
+split into runs: a code-shaped usage example living inside a doc comment
+is exactly the kind of comment nobody expects flagged, and it never
+becomes a candidate.
 
 That signal was chosen by measurement, not by taste. Against a 1710-file
 Kotlin repository:
@@ -48,6 +56,21 @@ The body is the field that usually decides the answer. "Temporarily
 disabled, restore after #3391" in a four-year-old commit tells you both
 what this is and that nobody restored it.
 
+Each candidate also carries an excerpt: up to `EXCERPT_LINES` lines of the
+block's own text, each cut at `EXCERPT_MAX_CHARS` characters, comment
+markers and leading asterisks stripped and nothing else, not normalized,
+not summarized. It exists because the commit line can stop being useful
+for telling candidates apart: measured against a real scan of an Elixir
+repository, 43 candidates shared blame commits so heavily that 40 of them
+traced to one 142-file merge, and the commit line alone could not tell
+those 40 apart. Only the block's own text can.
+
+That means the excerpt puts real code into the checklist, not a
+description of it. Pasting that checklist into an issue moves that code
+along with it. That is a path by which private code reaches a public
+issue tracker, and whoever pastes the checklist should know it before
+they do.
+
 ## Workflow
 
 1. `python3 <skill>/scripts/scan.py --repo <repo> --path <dir>` and read the
@@ -65,11 +88,28 @@ what this is and that nobody restored it.
 
 ## Boundaries, stated rather than worked around
 
-- Block comments (`/* ... */`) are not detected. Line comments only.
+- Block comments (`/* ... */`) are detected, for the extensions in
+  `scanner.BLOCK_MARKERS`. A region opens only when the opening marker
+  starts the (stripped) line: `/*` sitting mid-line, including inside a
+  string literal, is not seen as an opener, since commented-out code
+  almost always starts a line.
+- A region opened with `/**` is a doc comment. It is discarded whole,
+  never split into runs and never reported as a candidate.
+- Nesting inside a block comment is not tracked: the first close marker
+  found ends the region.
+- The check that keeps a close marker from matching inside a string
+  literal counts quote characters on that one physical line only. A
+  string literal that itself spans several lines, a Kotlin text block, a
+  C# verbatim string, a multi-line SQL or PHP literal, resets that count
+  at every line break, so a `*/` that is really still inside the literal
+  can end the region early.
 - Code inside a comment that is documentation, a usage example, can be
   reported as a candidate. Reading its diff is what tells them apart.
-- A language absent from `scanner.COMMENT_MARKERS` is not scanned. The
-  count of skipped files is in `limits.files_skipped_unsupported`.
+- A language absent from `scanner.COMMENT_MARKERS` is not scanned, block
+  comments included: `scan.py` decides whether to scan a file by its
+  line-comment marker alone, and every extension in `scanner.BLOCK_MARKERS`
+  already has one. The count of skipped files is in
+  `limits.files_skipped_unsupported`.
 - `look_first`'s vocabulary is English and Korean. Unlike the subject
   matching noise scoring deliberately refuses to do, this one filters
   nothing and decides nothing, so a missed word costs an ordering nudge,
