@@ -167,6 +167,43 @@ class TestChecklistShape(unittest.TestCase):
             candidates=[_candidate(touched_by_commits=2)]))
         self.assertIn("2 commits touched these lines", out)
 
+    def test_excerpt_is_rendered_with_pipe_prefix(self):
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(excerpt=["for attempt in range(3):",
+                                             "gateway.charge(order)"])]))
+        self.assertIn("      | for attempt in range(3):", out)
+        self.assertIn("      | gateway.charge(order)", out)
+
+    def test_excerpt_and_body_quote_are_visually_distinct(self):
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(excerpt=["for attempt in range(3):"])]))
+        self.assertIn("      | for attempt in range(3):", out)
+        self.assertIn("      > Gateway kept returning 502", out)
+
+    def test_no_excerpt_key_means_no_excerpt_line(self):
+        c = _candidate()
+        c.pop("excerpt", None)
+        out = artifacts.scan_checklist(_scan_data(candidates=[c]))
+        self.assertNotIn("      | ", out)
+
+    def test_empty_excerpt_list_means_no_excerpt_line(self):
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(excerpt=[])]))
+        self.assertNotIn("      | ", out)
+
+    def test_malformed_excerpt_field_degrades_rather_than_raises(self):
+        """The scan JSON is a file a user could hand-edit; a string instead
+        of a list, or a list holding a non-string, must not crash the
+        checklist renderer."""
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(excerpt="not a list")]))
+        self.assertNotIn("      | ", out)
+
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(excerpt=[42, None, "  ", "real line"])]))
+        self.assertIn("      | real line", out)
+        self.assertNotIn("      | 42", out)
+
     def test_truncated_body_is_marked(self):
         commit = _candidate()["commented_out_by"]
         commit["body_truncated"] = True
@@ -187,6 +224,19 @@ class TestKorean(unittest.TestCase):
     def test_unknown_lang_falls_back_to_english(self):
         out = artifacts.scan_checklist(_scan_data(), lang="fr")
         self.assertIn("- [ ] ", out)
+
+    def test_excerpt_text_is_not_translated_in_korean(self):
+        """발췌는 파일에서 온 데이터이므로 ko 렌더링에서도 그대로 나와야 한다."""
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(excerpt=["for attempt in range(3):"])]),
+            lang="ko")
+        self.assertIn("      | for attempt in range(3):", out)
+
+    def test_excerpt_text_is_not_translated_in_english(self):
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(excerpt=["for attempt in range(3):"])]),
+            lang="en")
+        self.assertIn("      | for attempt in range(3):", out)
 
 
 if __name__ == "__main__":

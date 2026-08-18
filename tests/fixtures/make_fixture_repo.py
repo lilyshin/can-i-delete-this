@@ -1217,3 +1217,46 @@ def build_timezone_skew(dest: str, *, name: str = "timezone_skew") -> dict:
         "start": 2,
         "end": 5,
     }
+
+
+def build_block_comment(dest: str, *, name: str = "block_comment") -> dict:
+    """A single Kotlin file with one `/* ... */` block of dead code and one
+    `/** ... */` KDoc block right after it, for testing that block-comment
+    detection (`scanner.find_blocks(..., block=...)`) finds exactly the
+    dead code and discards the doc comment whole, per scanner.py's module
+    docstring on why a `/**`-opened region is never split into candidates.
+
+    The dead block (`oldCharge`) is four non-blank lines, each code-shaped
+    (`fun`, `val`, `return`, and the bare `}` all match `_CODE_SHAPE`), so
+    it clears both `MIN_BLOCK_LINES` and `CODE_SHAPE_RATIO`. The KDoc block
+    (`applyDiscount`'s doc comment) is prose, not code, but that does not
+    even matter: doc comments are discarded whole before the shape check
+    ever runs.
+    """
+    repo = _init(dest, name)
+    target = repo / "Billing.kt"
+    target.write_text(
+        "class Billing {\n"
+        "    /*\n"
+        "    fun oldCharge(order: Order): Double {\n"
+        "        val fee = 1.0\n"
+        "        return order.total + fee\n"
+        "    }\n"
+        "    */\n"
+        "\n"
+        "    /**\n"
+        "     * Applies the current discount policy.\n"
+        "     * @param order the order to discount\n"
+        "     */\n"
+        "    fun applyDiscount(order: Order): Double {\n"
+        "        return order.total\n"
+        "    }\n"
+        "}\n"
+    )
+    sha = _commit(repo, "refactor: 수수료 계산 로직 정리", "2022-04-01T10:00:00")
+
+    return {
+        "repo": str(repo),
+        "path": "Billing.kt",
+        "sha": sha,
+    }

@@ -147,7 +147,8 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
     if min_lines is None:
         min_lines = scanner.MIN_BLOCK_LINES
 
-    notes = ["block comments (/* ... */) are not detected; only line comments"]
+    notes = ["block comments (/* ... */) are detected for C-family languages "
+             "and sql; doc comments (/** ... */) are discarded whole"]
     counts = {"scanned": 0, "unsupported": 0, "vendored": 0, "generated": 0,
               "too_large": 0, "missing_at_head": 0, "not_reached": 0}
     candidates = []
@@ -172,7 +173,9 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
             continue
         counts["scanned"] += 1
         marker = scanner.marker_for(file_path)
-        for block in scanner.find_blocks(text, marker, min_lines=min_lines):
+        block_markers = scanner.block_markers_for(file_path)
+        for block in scanner.find_blocks(text, marker, block=block_markers,
+                                          min_lines=min_lines):
             if len(candidates) >= max_candidates:
                 cap_reached = True
                 break
@@ -205,6 +208,7 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
                 "end": block.end,
                 "lines": block.lines,
                 "code_lines": block.code_lines,
+                "excerpt": list(block.excerpt),
                 "commented_out_by": commit,
                 "touched_by_commits": touched,
                 "look_first": bool(commit) and _looks_urgent(commit),

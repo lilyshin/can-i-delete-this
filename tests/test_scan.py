@@ -65,6 +65,26 @@ class TestCandidates(ScanCase):
         self.assertEqual(c["commented_out_by"]["age_days"], 1885)
 
 
+class TestExcerpt(ScanCase):
+    """The block's own text rides along on the candidate, because a scan
+    that shares one blame commit across many candidates (a wide merge, in
+    the field report this is built from) needs something other than the
+    commit line to tell them apart. See scanner.py's `EXCERPT_LINES` and
+    `EXCERPT_MAX_CHARS` docstring for the measurement behind this."""
+
+    def test_each_candidate_carries_its_own_excerpt(self):
+        for c in self.data["candidates"]:
+            self.assertIsInstance(c["excerpt"], list, c["path"])
+            self.assertTrue(c["excerpt"], c["path"])
+
+    def test_excerpt_text_is_really_in_the_file(self):
+        repo = self.info["repo"]
+        for c in self.data["candidates"]:
+            text = gitq.run_git(repo, ["show", "HEAD:" + c["path"]])
+            for line in c["excerpt"]:
+                self.assertIn(line, text, (c["path"], line))
+
+
 class TestOrderingAndLookFirst(ScanCase):
 
     def test_oldest_first(self):
@@ -420,6 +440,49 @@ class TestUnusableBlameSha(ScanCase):
         self.assertTrue(others)
         for c in others:
             self.assertIsNotNone(c["commented_out_by"], c["path"])
+
+
+class TestBlockComment(unittest.TestCase):
+    """One `/* ... */` block of dead code and one `/** ... */` KDoc block in
+    the same Kotlin file. Only the dead code is a candidate: the doc
+    comment is discarded whole regardless of how code-shaped its text
+    looks (see scanner.py's module docstring)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.info = make_fixture_repo.build_block_comment(cls.tmp.name)
+        cls.data = scanmod.scan(cls.info["repo"], ".", now=NOW)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_exactly_one_candidate(self):
+        paths = [(c["path"], c["start"], c["end"]) for c in self.data["candidates"]]
+        self.assertEqual(len(self.data["candidates"]), 1, paths)
+
+    def test_the_candidate_is_the_dead_code_not_the_kdoc(self):
+        c = self.data["candidates"][0]
+        self.assertEqual(c["path"], "Billing.kt")
+        # The KDoc block (lines 9-12) must not be the one reported.
+        self.assertLess(c["end"], 9, c)
+
+    def test_the_candidate_carries_its_own_excerpt(self):
+        c = self.data["candidates"][0]
+        self.assertTrue(c["excerpt"], c)
+        text = gitq.run_git(self.info["repo"], ["show", "HEAD:" + c["path"]])
+        for line in c["excerpt"]:
+            self.assertIn(line, text)
+
+    def test_the_excerpt_is_the_dead_code_not_the_kdoc_prose(self):
+        c = self.data["candidates"][0]
+        joined = " ".join(c["excerpt"])
+        self.assertNotIn("Applies the current discount policy", joined)
+
+    def test_the_commenting_commit_is_carried(self):
+        c = self.data["candidates"][0]
+        self.assertEqual(c["commented_out_by"]["sha"], self.info["sha"])
 
 
 if __name__ == "__main__":

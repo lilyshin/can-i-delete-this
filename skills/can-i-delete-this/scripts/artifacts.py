@@ -112,7 +112,9 @@ _STRINGS = {
                        "{missing_at_head} missing at HEAD, {not_reached} never "
                        "examined after the candidate cap).",
         "scan.cap": "Candidate cap of {cap} was reached; more may exist.",
-        "scan.boundary": "Block comments (`/* ... */`) are not detected.",
+        "scan.boundary": "Block comments (`/* ... */`) are detected for "
+                          "C-family languages and sql; doc comments "
+                          "(`/** ... */`) are discarded whole.",
     },
     "ko": {
         "label.grade": "등급",
@@ -182,7 +184,8 @@ _STRINGS = {
                        "용량 초과 {too_large}개, HEAD에 없음 {missing_at_head}개 건너뜀, "
                        "후보 상한 도달로 아예 열지 않음 {not_reached}개).",
         "scan.cap": "후보 상한 {cap}에 도달했습니다. 더 있을 수 있습니다.",
-        "scan.boundary": "블록 주석(`/* ... */`)은 감지하지 않습니다.",
+        "scan.boundary": "블록 주석(`/* ... */`)은 C 계열 언어와 sql에서 감지합니다. "
+                          "문서 주석(`/** ... */`)은 전부 버립니다.",
     },
 }
 
@@ -564,6 +567,19 @@ def scan_checklist(scan_data, *, lang="en"):
             meta = _t(lang, "scan.item_meta", lines=candidate.get("lines", 0),
                        age=commit["age_days"])
         lines.append("{}`{}` ({})".format(prefix, target, meta))
+
+        # The block's own text, read straight from the file and never
+        # translated (see the module docstring): with many candidates
+        # sharing one blame commit -- a wide merge, say -- the commit line
+        # below is identical for all of them and only this text tells a
+        # reader them apart. `|` keeps it visually distinct from the
+        # commit body quote (`>`) two lines down.
+        raw_excerpt = candidate.get("excerpt")
+        excerpt_lines = [line for line in raw_excerpt
+                          if isinstance(line, str) and line.strip()] \
+            if isinstance(raw_excerpt, list) else []
+        for excerpt_line in excerpt_lines:
+            lines.append("      | " + excerpt_line)
 
         sha = commit.get("sha") or ""
         if sha:
