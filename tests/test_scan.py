@@ -463,10 +463,16 @@ class TestBlockComment(unittest.TestCase):
         self.assertEqual(len(self.data["candidates"]), 1, paths)
 
     def test_the_candidate_is_the_dead_code_not_the_kdoc(self):
-        c = self.data["candidates"][0]
-        self.assertEqual(c["path"], "Billing.kt")
-        # The KDoc block (lines 9-12) must not be the one reported.
-        self.assertLess(c["end"], 9, c)
+        """Checked against every candidate the scan returned, not just the
+        first: the KDoc body is deliberately as code-shaped as the dead
+        code (see `build_block_comment`'s docstring), so if the `/**`
+        exclusion were ever weakened the KDoc's own range (9-14) would
+        surface as a second candidate. Indexing `candidates[0]` alone would
+        miss that, since the oldest-first sort still puts the dead code
+        first when both share one commit."""
+        paths = [(c["path"], c["start"], c["end"]) for c in self.data["candidates"]]
+        self.assertIn(("Billing.kt", 2, 7), paths, paths)
+        self.assertNotIn(("Billing.kt", 9, 14), paths, paths)
 
     def test_the_candidate_carries_its_own_excerpt(self):
         c = self.data["candidates"][0]
@@ -475,10 +481,17 @@ class TestBlockComment(unittest.TestCase):
         for line in c["excerpt"]:
             self.assertIn(line, text)
 
-    def test_the_excerpt_is_the_dead_code_not_the_kdoc_prose(self):
-        c = self.data["candidates"][0]
-        joined = " ".join(c["excerpt"])
-        self.assertNotIn("Applies the current discount policy", joined)
+    def test_the_excerpt_is_the_dead_code_not_the_kdoc(self):
+        """The fixture's KDoc body (`legacyDiscount`) is deliberately just as
+        code-shaped as the real dead code (`oldCharge`); see
+        `build_block_comment`'s docstring. The only thing that can be
+        keeping it out of every candidate's excerpt is the `/**` exclusion
+        itself, not a weaker signal like prose wording or a length gate.
+        Checked across every candidate, not just the first, for the same
+        reason as the test above."""
+        joined = " ".join(line for c in self.data["candidates"]
+                          for line in (c.get("excerpt") or []))
+        self.assertNotIn("legacyDiscount", joined)
 
     def test_the_commenting_commit_is_carried(self):
         c = self.data["candidates"][0]

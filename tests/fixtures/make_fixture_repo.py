@@ -1228,10 +1228,21 @@ def build_block_comment(dest: str, *, name: str = "block_comment") -> dict:
 
     The dead block (`oldCharge`) is four non-blank lines, each code-shaped
     (`fun`, `val`, `return`, and the bare `}` all match `_CODE_SHAPE`), so
-    it clears both `MIN_BLOCK_LINES` and `CODE_SHAPE_RATIO`. The KDoc block
-    (`applyDiscount`'s doc comment) is prose, not code, but that does not
-    even matter: doc comments are discarded whole before the shape check
-    ever runs.
+    it clears both `MIN_BLOCK_LINES` and `CODE_SHAPE_RATIO`.
+
+    The KDoc block (`legacyDiscount`) is deliberately also four code-shaped
+    lines with no `@param`, no TODO, no license header and no blank-line
+    dilution -- nothing `_NOT_CODE` would catch. Written this way on
+    purpose: if it read as prose, or if any line inside it tripped
+    `_NOT_CODE` and split the region below `MIN_BLOCK_LINES`, the doc
+    comment would fail to become a candidate for a reason that has nothing
+    to do with the `/**` exclusion, and the three tests below it would
+    pass whether or not that exclusion exists. Confirmed empirically (see
+    the fix report in .superpowers/sdd/2026-08-18-excerpt-and-block-comments/
+    task-2-report.md): with the exclusion temporarily disabled, this exact
+    body clears `MIN_BLOCK_LINES` and `CODE_SHAPE_RATIO` on its own and
+    becomes a second candidate, so the exclusion is the only thing standing
+    between this fixture and two candidates.
     """
     repo = _init(dest, name)
     target = repo / "Billing.kt"
@@ -1245,8 +1256,10 @@ def build_block_comment(dest: str, *, name: str = "block_comment") -> dict:
         "    */\n"
         "\n"
         "    /**\n"
-        "     * Applies the current discount policy.\n"
-        "     * @param order the order to discount\n"
+        "     * fun legacyDiscount(order: Order): Double {\n"
+        "     *     val rate = 0.1\n"
+        "     *     return order.total * rate\n"
+        "     * }\n"
         "     */\n"
         "    fun applyDiscount(order: Order): Double {\n"
         "        return order.total\n"
