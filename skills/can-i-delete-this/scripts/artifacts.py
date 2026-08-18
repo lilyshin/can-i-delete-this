@@ -95,6 +95,9 @@ _STRINGS = {
 
         "scan.header": "Commented-out code candidates: {count} ({path})",
         "scan.none": "No commented-out code blocks found under {path}.",
+        "scan.none_capped": "No candidates are listed for {path}: the scan "
+                             "stopped at the candidate cap before reporting "
+                             "any, so nothing here says the blocks are absent.",
         "scan.intro": "Oldest first. Nothing here is graded. To grade one, run "
                        "`/can-i-delete-this:check <path>:<start>-<end>`.",
         "scan.look_first": "look first",
@@ -102,10 +105,12 @@ _STRINGS = {
         "scan.item_meta_unknown": "{lines} lines, commenting commit unknown",
         "scan.body_truncated": "(body truncated; `git show {sha}` for the rest)",
         "scan.touched_by": "{count} commits touched these lines; the oldest is shown",
+        "scan.hints": "about that commit: {hints}",
         "scan.scope": "Scan scope: {scanned} of {total} files "
                        "({unsupported} skipped as unsupported, {vendored} vendored, "
                        "{generated} generated, {too_large} too large to read, "
-                       "{missing_at_head} missing at HEAD).",
+                       "{missing_at_head} missing at HEAD, {not_reached} never "
+                       "examined after the candidate cap).",
         "scan.cap": "Candidate cap of {cap} was reached; more may exist.",
         "scan.boundary": "Block comments (`/* ... */`) are not detected.",
     },
@@ -161,6 +166,9 @@ _STRINGS = {
 
         "scan.header": "주석 처리된 코드 후보 {count}건 ({path})",
         "scan.none": "{path} 아래에 주석 처리된 코드 블록이 없습니다.",
+        "scan.none_capped": "{path}에 대해 나열된 후보가 없습니다. 후보 상한에서 "
+                             "스캔이 멈춰 하나도 보고하지 못한 것이며, 블록이 "
+                             "없다는 뜻이 아닙니다.",
         "scan.intro": "오래된 순입니다. 등급은 매기지 않았습니다. 각 항목을 판정하려면 "
                        "`/can-i-delete-this:check <path>:<start>-<end>`를 실행하세요.",
         "scan.look_first": "먼저 볼 것",
@@ -168,9 +176,11 @@ _STRINGS = {
         "scan.item_meta_unknown": "{lines}줄, 주석 처리한 커밋을 알 수 없음",
         "scan.body_truncated": "(본문 잘림, 나머지는 `git show {sha}`)",
         "scan.touched_by": "이 줄들을 건드린 커밋이 {count}개이고 가장 오래된 것을 보여줍니다",
+        "scan.hints": "그 커밋에 대해: {hints}",
         "scan.scope": "스캔 범위: 전체 {total}개 파일 중 {scanned}개 "
                        "(미지원 {unsupported}개, vendored {vendored}개, 생성물 {generated}개, "
-                       "용량 초과 {too_large}개, HEAD에 없음 {missing_at_head}개 건너뜀).",
+                       "용량 초과 {too_large}개, HEAD에 없음 {missing_at_head}개 건너뜀, "
+                       "후보 상한 도달로 아예 열지 않음 {not_reached}개).",
         "scan.cap": "후보 상한 {cap}에 도달했습니다. 더 있을 수 있습니다.",
         "scan.boundary": "블록 주석(`/* ... */`)은 감지하지 않습니다.",
     },
@@ -514,7 +524,13 @@ def scan_checklist(scan_data, *, lang="en"):
     generated = limits.get("files_skipped_generated") or 0
     too_large = limits.get("files_skipped_too_large") or 0
     missing_at_head = limits.get("files_missing_at_head") or 0
-    total = scanned + unsupported + vendored + generated + too_large + missing_at_head
+    # Files `ls-files` listed but the scan never opened, because the
+    # candidate cap stopped it first. Counted in the total so the scope
+    # sentence means "of everything tracked under this path", not "of
+    # everything we happened to reach".
+    not_reached = limits.get("files_not_reached") or 0
+    total = (scanned + unsupported + vendored + generated + too_large
+             + missing_at_head + not_reached)
 
     lines = []
     if candidates:
@@ -522,6 +538,12 @@ def scan_checklist(scan_data, *, lang="en"):
                                  path=path))
         lines.append("")
         lines.append(_t(lang, "scan.intro"))
+        lines.append("")
+    elif limits.get("candidate_cap_reached"):
+        # An empty list under a reached cap (a cap of 0) is "nothing was
+        # reported", not "nothing is there". Saying the latter would be a
+        # claim about files the scan never looked at.
+        lines.append("## " + _t(lang, "scan.none_capped", path=path))
         lines.append("")
     else:
         lines.append("## " + _t(lang, "scan.none", path=path))
@@ -557,12 +579,24 @@ def scan_checklist(scan_data, *, lang="en"):
         if (candidate.get("touched_by_commits") or 0) > 1:
             lines.append("      " + _t(lang, "scan.touched_by",
                                         count=candidate["touched_by_commits"]))
+        # What blame returned is the oldest commit owning these lines,
+        # which is not always the commit that commented them out. The
+        # hints scan.py already read say when that commit looks like a
+        # sweep or a formatter, so a reader sees the doubt on the same
+        # line as the attribution instead of only in the JSON.
+        raw_hints = commit.get("hints")
+        hints = [h for h in (raw_hints or []) if isinstance(h, str) and h.strip()] \
+            if isinstance(raw_hints, list) else []
+        if hints:
+            lines.append("      " + _t(lang, "scan.hints",
+                                        hints="; ".join(hints)))
 
     lines.append("")
     lines.append(_t(lang, "scan.scope", scanned=scanned, total=total,
                      unsupported=unsupported, vendored=vendored,
                      generated=generated, too_large=too_large,
-                     missing_at_head=missing_at_head))
+                     missing_at_head=missing_at_head,
+                     not_reached=not_reached))
     if limits.get("candidate_cap_reached"):
         lines.append(_t(lang, "scan.cap", cap=limits.get("max_candidates")))
     lines.append(_t(lang, "scan.boundary"))

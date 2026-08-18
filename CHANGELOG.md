@@ -26,33 +26,52 @@ after #3391", four years ago.
   comments is a block only when the run itself is at least 3 lines long,
   at least 3 of its non-blank lines carry syntax prose would not, and
   those code-shaped lines make up at least 70% of the non-blank total. A
-  short run at a perfect ratio still misses the count gate and is not a
-  block. A TODO line inside a run ends the run instead of
+  run padded with blank comment lines can clear the length gate and the
+  ratio gate and still miss the count gate, and is not a block; a short
+  run is rejected by the length gate before the count gate is reached.
+  A TODO line inside a run ends the run instead of
   being dropped from it, so a note between two commented-out fragments
   separates them rather than joining them. Blank comment lines stay in the
   block's span but leave the ratio's denominator, because a commented-out
   function has blank lines in it and counting them as prose rejected the
   block.
 - New `scripts/scan.py`: enumerates with `ls-files`, reads each file at
-  HEAD, and blames each block to find the commit that commented it out.
+  HEAD, and blames the same revision the content came from to find the
+  commit behind each block. Blaming the working tree with line numbers
+  read from HEAD answers for whatever an uncommitted edit left on those
+  lines, so `gitq.blame_args`/`blame_shas` now take the revision and the
+  scan passes `HEAD`. `blame_shas` also drops git's all-zeros "not
+  committed yet" sha, which is 40 hex characters, names no commit, and
+  used to reach `commit_meta` and raise.
   When a block carries several blame shas, the oldest is reported with
   `touched_by_commits` naming how many there were, since "how long has
-  this been sitting here" is measured from when the block started.
+  this been sitting here" is measured from when the block started. Oldest
+  means oldest by instant: `%aI` carries a per-commit UTC offset, so
+  ordering the date strings ranked a commit from another timezone wrongly
+  and could hand the block to the wrong commit entirely.
   Vendored, generated, unsupported and oversized files are skipped and
   counted in `limits`, and so is a tracked file `ls-files` lists but `show
-  HEAD:<path>` cannot read (`files_missing_at_head`). A failed blame leaves
-  the candidate in place with `commented_out_by: null`, because failing to
-  learn a fact is not the same as the candidate not existing.
+  HEAD:<path>` cannot read (`files_missing_at_head`), and so are the files
+  a reached candidate cap left unopened (`files_not_reached`), so the
+  counts add up to what git tracks under the path rather than to what the
+  scan happened to reach. A failed blame, or a sha git cannot read, leaves
+  the candidate in place with `commented_out_by: null` and costs one
+  candidate its facts rather than the run, because failing to learn a fact
+  is not the same as the candidate not existing.
 - `look_first` marks a candidate whose commenting commit mentions an
   incident, a revert, a rollback or a temporary disable, in English or
   Korean. It is an ordering hint. It filters nothing and grades nothing,
   which is the distinction 0.7.0 drew for subject vocabulary generally.
 - New `artifacts.scan_checklist` and `artifacts.py --scan`: a markdown
   checklist to paste into an issue, carrying each block's path and line
-  range, its age, and the commenting commit's sha, subject and first body
-  line. Checkbox syntax is written literally, since 0.2.2 built it from an
-  escape sequence Python read as octal and shipped broken checkboxes in
-  every version until 0.2.3.
+  range, its age, and the blamed commit's sha, subject and first body
+  line, plus that commit's noise hints on one line when there are any, so
+  "this may be a formatter, not the commenting commit" is visible where
+  the attribution is. Checkbox syntax is written literally, since 0.2.2
+  built it from an escape sequence Python read as octal and shipped broken
+  checkboxes in every version until 0.2.3. An empty candidate list under a
+  reached cap says the scan stopped before reporting anything, not that
+  the path is clean.
 - New `/can-i-delete-this:scan <path>` command and `batch-mode.md`. Both
   say the same thing in different words: the scan grades nothing, and a
   list of plausible-looking "safe" judgements nobody verified is the

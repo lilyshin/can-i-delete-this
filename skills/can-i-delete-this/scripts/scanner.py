@@ -7,7 +7,8 @@ A block is a run of consecutive line comments whose text looks like code
 rather than prose. That signal was chosen by measurement over two
 alternatives (see docs/specs, not shipped): against a 1710-file Kotlin
 repository it found 18 blocks, 1% of files, where an unreferenced-file
-signal reported 240 candidates of which roughly one in ten was plausible.
+signal was estimated at 240 candidates, extrapolated from a 150-file
+sample that produced 21, of which roughly one in ten was plausible.
 
 What decides a block is deliberately narrow, because the cost of a false
 positive is a reader's time and the cost of a false negative is a block

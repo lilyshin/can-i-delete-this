@@ -1133,3 +1133,87 @@ def build_touched_twice(dest: str, *, name: str = "touched_twice") -> dict:
         "start": 2,
         "end": 5,
     }
+
+
+def build_timezone_skew(dest: str, *, name: str = "timezone_skew") -> dict:
+    """Commit dates whose text order and instant order disagree, because
+    the commits were authored in different timezones.
+
+    Every other fixture in this module passes offset-free dates, so
+    lexicographic order over `%aI` accidentally equalled chronological
+    order and a string sort passed for the wrong reason. Here it cannot:
+
+    - `alpha.py`: `outage_sha` comments five lines out at
+      2020-03-02T02:00:00+09:00, which is 2020-03-01T17:00Z, and says why
+      in an incident subject. `chore_sha` rewrites one line inside that
+      same commented block eight hours later at 2020-03-01T20:00:00-05:00,
+      which is 2020-03-02T01:00Z. `chore_sha`'s date string sorts first
+      and its instant is later, so a text sort reports the chore as the
+      commenting commit, drops the incident commit entirely, and turns
+      `look_first` off.
+    - `beta.py`: commented out at 2020-03-01T19:00:00-11:00, which is
+      2020-03-02T06:00Z, the newest instant of the three, while its date
+      string sorts before both of `alpha.py`'s. A text sort therefore
+      lists `beta.py` first; only a sort by instant puts `alpha.py`, the
+      genuinely older block, at the top.
+    """
+    repo = _init(dest, name)
+    alpha = repo / "alpha.py"
+    beta = repo / "beta.py"
+
+    alpha.write_text(
+        "def charge(order):\n"
+        "    return gateway.charge(order)\n"
+    )
+    beta.write_text(
+        "def refund(order):\n"
+        "    return gateway.refund(order)\n"
+    )
+    _commit(repo, "feat: 결제/환불 모듈 추가", "2019-01-01T10:00:00+00:00")
+
+    alpha.write_text(
+        "def charge(order):\n"
+        "    # if order.retryable:\n"
+        "    #     for attempt in range(3):\n"
+        "    #         gateway.charge(order)\n"
+        "    #     return None\n"
+        "    return gateway.charge(order)\n"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "hotfix: 게이트웨이 장애로 재시도 비활성화",
+         "-m", "게이트웨이가 502를 계속 반환해서 재시도를 임시로 끕니다.",
+         date="2020-03-02T02:00:00+09:00")
+    outage_sha = _git(repo, "rev-parse", "HEAD")
+
+    alpha.write_text(
+        "def charge(order):\n"
+        "    # if order.retryable:\n"
+        "    #     for attempt in range(5):\n"
+        "    #         gateway.charge(order)\n"
+        "    #     return None\n"
+        "    return gateway.charge(order)\n"
+    )
+    chore_sha = _commit(repo, "chore: 주석 속 재시도 횟수 표기 수정",
+                         "2020-03-01T20:00:00-05:00")
+
+    beta.write_text(
+        "def refund(order):\n"
+        "    # if order.disputed:\n"
+        "    #     for step in range(3):\n"
+        "    #         gateway.refund(order)\n"
+        "    #     return None\n"
+        "    return gateway.refund(order)\n"
+    )
+    beta_sha = _commit(repo, "refactor: 환불 재시도 경로 정리",
+                        "2020-03-01T19:00:00-11:00")
+
+    return {
+        "repo": str(repo),
+        "alpha_path": "alpha.py",
+        "beta_path": "beta.py",
+        "outage_sha": outage_sha,
+        "chore_sha": chore_sha,
+        "beta_sha": beta_sha,
+        "start": 2,
+        "end": 5,
+    }

@@ -74,17 +74,68 @@ class TestChecklistShape(unittest.TestCase):
 
     def test_scope_counts_too_large_and_missing_at_head(self):
         """scan.py도 이 두 사유로 파일을 건너뛴다; 체크리스트가 빠뜨리면 스캔 범위를
-        실제보다 적게 보고하게 된다."""
+        실제보다 적게 보고하게 된다.
+
+        숫자만 찾으면 안 된다: 앞선 `assertIn("2", out)`/`assertIn("3", out)`은
+        출력 어딘가의 1294, 1a2b3c4, #3391 때문에 우연히 통과했다."""
         out = artifacts.scan_checklist(_scan_data(
             files_skipped_too_large=2, files_missing_at_head=3))
-        self.assertIn("2", out)
-        self.assertIn("3", out)
+        self.assertIn("2 too large to read", out)
+        self.assertIn("3 missing at HEAD", out)
         # total = 416 + 1294 + 0(vendored) + 0(generated) + 2(too_large) + 3(missing) = 1715
         self.assertIn("1715", out)
+
+    def test_scope_counts_files_the_cap_left_unexamined(self):
+        """상한에 걸려 열지도 않은 파일까지 세야 공개하는 총계가 '그 경로 아래
+        추적 중인 파일 수'가 된다. 세지 않으면 총계가 상한 위치에 따라 달라진다."""
+        out = artifacts.scan_checklist(_scan_data(
+            candidate_cap_reached=True, files_not_reached=24))
+        self.assertIn("24 never examined after the candidate cap", out)
+        # total = 416 + 1294 + 24 = 1734
+        self.assertIn("1734", out)
+
+    def test_scope_total_is_unchanged_for_a_scan_without_the_new_key(self):
+        """예전 스캔 JSON에는 files_not_reached가 없다. 없으면 0으로 읽고 총계는
+        그대로여야 한다."""
+        out = artifacts.scan_checklist(_scan_data())
+        self.assertIn("1710", out)
 
     def test_cap_is_disclosed(self):
         out = artifacts.scan_checklist(_scan_data(candidate_cap_reached=True))
         self.assertIn("200", out)
+
+    def test_zero_cap_does_not_claim_nothing_is_there(self):
+        """--max-candidates 0은 '없다'가 아니라 '보고하지 않았다'이다. 아무것도
+        보지 않은 스캔을 두고 아래에 블록이 없다고 말하면 거짓이다."""
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[], candidate_cap_reached=True, max_candidates=0))
+        self.assertNotIn("No commented-out code blocks found", out)
+        self.assertIn("the scan stopped at the candidate cap", out)
+        self.assertIn("Candidate cap of 0 was reached", out)
+
+    def test_zero_cap_wording_exists_in_korean_too(self):
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[], candidate_cap_reached=True, max_candidates=0),
+            lang="ko")
+        self.assertIn("후보 상한에서", out)
+        self.assertNotIn("주석 처리된 코드 블록이 없습니다", out)
+
+    def test_commit_hints_are_shown_when_git_supplied_them(self):
+        """blame이 준 것은 그 줄들을 가진 가장 오래된 커밋이지, 반드시 주석 처리한
+        커밋은 아니다. scan.py가 이미 읽어둔 hints가 그 의심을 같은 자리에서
+        말해준다."""
+        commit = _candidate()["commented_out_by"]
+        commit["hints"] = ["wide and shallow: 40 files, 1.2 lines changed "
+                            "per file on average"]
+        out = artifacts.scan_checklist(_scan_data(
+            candidates=[_candidate(commented_out_by=commit)]))
+        self.assertIn("wide and shallow: 40 files", out)
+        self.assertEqual(len([l for l in out.splitlines()
+                              if "wide and shallow" in l]), 1)
+
+    def test_no_hint_line_when_there_are_no_hints(self):
+        out = artifacts.scan_checklist(_scan_data())
+        self.assertNotIn("about that commit", out)
 
     def test_no_grade_words(self):
         out = artifacts.scan_checklist(_scan_data()).lower()

@@ -53,14 +53,39 @@ def _skip_reason(path):
     return None
 
 
-def _age_days(iso_date, now):
+def _parse_date(iso_date):
+    """A commit's `%aI` date as an aware datetime, or None."""
     try:
         when = datetime.fromisoformat(iso_date)
     except (TypeError, ValueError):
         return None
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
+    return when
+
+
+def _age_days(iso_date, now):
+    when = _parse_date(iso_date)
+    if when is None:
+        return None
     return (now - when).days
+
+
+# Sort key for a commit date that orders by instant rather than by text.
+# `%aI` carries a per-commit UTC offset, so lexicographic order is not
+# chronological order across timezones: 2020-03-01T20:00:00-05:00 sorts
+# first as text and is eight hours *later* than 2020-03-02T02:00:00+09:00.
+# The leading flag puts an unparseable date last: an unknown date is not
+# evidence of age, which is the same reasoning as candidates with no
+# commit facts sorting last below.
+_UNKNOWN_INSTANT = (1, 0.0)
+
+
+def _instant(iso_date):
+    when = _parse_date(iso_date)
+    if when is None:
+        return _UNKNOWN_INSTANT
+    return (0, when.timestamp())
 
 
 # Same cap and reasoning as trace.py's `_BODY_LIMIT`: the body is where
@@ -109,7 +134,9 @@ def _oldest(repo, shas, now, cache):
     is the fact "how long has this been sitting here" is measured from.
     """
     facts = [_commit_facts(repo, sha, now, cache) for sha in shas]
-    facts.sort(key=lambda f: f["date"] or "")
+    # By instant, not by the date string, and by sha after that so a tie
+    # (or two unparseable dates) still resolves the same way every run.
+    facts.sort(key=lambda f: (_instant(f["date"]), f["sha"]))
     return facts[0], len(facts)
 
 
@@ -122,7 +149,7 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
 
     notes = ["block comments (/* ... */) are not detected; only line comments"]
     counts = {"scanned": 0, "unsupported": 0, "vendored": 0, "generated": 0,
-              "too_large": 0, "missing_at_head": 0}
+              "too_large": 0, "missing_at_head": 0, "not_reached": 0}
     candidates = []
     cache = {}
     cap_reached = False
@@ -130,7 +157,7 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
     listed = gitq.run_git(repo, ["ls-files", "--", path])
     files = [line for line in listed.splitlines() if line.strip()]
 
-    for file_path in files:
+    for index, file_path in enumerate(files):
         reason = _skip_reason(file_path)
         if reason:
             counts[reason] += 1
@@ -149,14 +176,25 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
             if len(candidates) >= max_candidates:
                 cap_reached = True
                 break
+            # Blame the revision the content came from. `text` above is
+            # HEAD's, so the block's line numbers are HEAD's, and blaming
+            # the working tree would answer for whichever lines an
+            # uncommitted edit left at those numbers.
+            #
+            # One unusable sha costs this candidate its facts, never the
+            # run: the lookup is inside the guard alongside the blame,
+            # because `commit_meta` on a sha blame reported but git cannot
+            # read raises exactly like a failed blame does.
             try:
-                shas = gitq.blame_shas(repo, file_path, block.start, block.end)
+                shas = gitq.blame_shas(repo, file_path, block.start,
+                                        block.end, rev="HEAD")
+                commit, touched = (_oldest(repo, shas, now, cache) if shas
+                                   else (None, 0))
+            except gitq.GitWriteAttempt:
+                raise
             except RuntimeError:
-                shas = []
-            if shas:
-                commit, touched = _oldest(repo, shas, now, cache)
-            else:
                 commit, touched = None, 0
+            if commit is None:
                 notes.append(
                     "blame failed for {}:{}-{}; the block is reported "
                     "without its commit".format(
@@ -172,15 +210,24 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
                 "look_first": bool(commit) and _looks_urgent(commit),
             })
         if cap_reached:
+            # Every file `ls-files` listed after this one is unexamined,
+            # not classified and not scanned. Counted so that the counts
+            # in `limits` still add up to what git tracks under `path`:
+            # a total that means "the files we happened to reach" shifts
+            # with wherever the cap landed and understates the scope.
+            counts["not_reached"] = len(files) - index - 1
             break
 
-    # Oldest first. A candidate with no commit facts sorts last rather than
-    # first: an unknown date is not evidence of age.
+    # Oldest first, by instant. A candidate with no commit facts sorts last
+    # rather than first: an unknown date is not evidence of age.
     candidates.sort(key=lambda c: (
         c["commented_out_by"] is None,
-        (c["commented_out_by"] or {}).get("date") or "",
+        _instant((c["commented_out_by"] or {}).get("date")),
         c["path"], c["start"]))
 
+    if counts["not_reached"]:
+        notes.append("{} file(s) were never examined: the candidate cap was "
+                     "reached first".format(counts["not_reached"]))
     if counts["too_large"]:
         notes.append("{} file(s) over {} bytes were skipped".format(
             counts["too_large"], MAX_FILE_BYTES))
@@ -198,6 +245,7 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
             "files_skipped_generated": counts["generated"],
             "files_skipped_too_large": counts["too_large"],
             "files_missing_at_head": counts["missing_at_head"],
+            "files_not_reached": counts["not_reached"],
             "min_lines": min_lines,
             "max_candidates": max_candidates,
             "candidate_cap_reached": cap_reached,

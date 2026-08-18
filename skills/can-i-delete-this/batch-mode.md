@@ -31,10 +31,18 @@ it back.
 ## What each candidate carries
 
 Facts only, all of them read from git: the block's path and line range, its
-size, and the commit that commented it out (sha, subject, body, author,
-date, days since). `look_first` is set when that commit's subject or body
-mentions an incident, a revert, a rollback or a temporary disable. It is an
-ordering hint, not a grade and not a filter.
+size, and the commit blame attributes to those lines, oldest first when
+there are several (sha, subject, body, author, date, days since). That
+commit is usually the one that commented the block out, but blame answers
+"who owns these lines now", so a formatter or a repo-wide sweep can own
+them instead. The candidate carries the noise hints for that commit
+alongside it, and reading the commit's diff is what settles it.
+`look_first` is set when that commit's subject or body mentions an
+incident, a revert, a rollback or a temporary disable. It is an ordering
+hint, not a grade and not a filter.
+
+Line numbers come from the file at HEAD and the blame runs against HEAD
+too, so an uncommitted edit in the working tree changes no answer.
 
 The body is the field that usually decides the answer. "Temporarily
 disabled, restore after #3391" in a four-year-old commit tells you both
@@ -47,7 +55,9 @@ what this is and that nobody restored it.
 2. `python3 <skill>/scripts/artifacts.py --scan scan.json --lang <lang>` for
    a checklist to paste into an issue.
 3. Disclose the scan scope from `limits`, including what was skipped and
-   whether the candidate cap was reached.
+   whether the candidate cap was reached. The file counts in `limits` add
+   up to what git tracks under the path: a cap that stops the scan early
+   leaves the rest in `files_not_reached`, which is unexamined, not clean.
 4. When the user picks one, run the ordinary single-target workflow on
    `path:start-end`: `trace.py`, a verdict, `verdict.py`, then `render.py`
    and `artifacts.py`. Every non-negotiable rule in `SKILL.md` applies to

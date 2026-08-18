@@ -98,7 +98,8 @@ class TestFindBlocks(unittest.TestCase):
             "// we kept this around while the migration was in flight\n"
             "// and nobody has looked at it since then honestly\n"
         )
-        self.assertEqual(scanner.find_blocks(text, "#"), [])
+        # The marker here is "//", so a "#" run over the same text finds
+        # nothing whatever the ratio does; only this assertion tests the gate.
         self.assertEqual(scanner.find_blocks(text, "//"), [])
 
     def test_ratio_floor_accepts_a_mostly_code_run(self):
@@ -113,6 +114,31 @@ class TestFindBlocks(unittest.TestCase):
         blocks = scanner.find_blocks(text, "//")
         self.assertEqual(len(blocks), 1)
         self.assertEqual(blocks[0].code_lines, 4)
+
+    def test_blank_comment_lines_cannot_carry_a_run_past_the_count_gate(self):
+        """세 관문 중 가운데(코드처럼 보이는 줄이 min_lines 이상)만이 이 런을
+        떨어뜨린다. 런 길이는 5줄이라 길이 관문을 넘고, 빈 주석 줄은 분모에서
+        빠지니 비율은 2/2 = 1.0으로 비율 관문도 넘는다. 코드 줄이 2개뿐이라
+        가운데 관문에서 떨어진다. 이 관문을 지우면 블록이 하나 생긴다."""
+        text = (
+            "// x = one()\n"
+            "//\n"
+            "//\n"
+            "//\n"
+            "// y = two()\n"
+        )
+        self.assertEqual(scanner.find_blocks(text, "//"), [])
+
+    def test_the_count_gate_is_the_sole_rejector_of_that_run(self):
+        """위 테스트가 실제로 가운데 관문을 겨냥하고 있는지 전제를 직접 확인한다.
+        길이·비율 관문은 통과해야 한다."""
+        run = [(1, " x = one()"), (2, ""), (3, ""), (4, ""), (5, " y = two()")]
+        self.assertGreaterEqual(len(run), scanner.MIN_BLOCK_LINES)
+        content = [t for _, t in run if t.strip()]
+        code = [t for t in content if scanner.looks_like_code(t)]
+        self.assertEqual(len(code), len(content))
+        self.assertGreaterEqual(len(code), len(content) * scanner.CODE_SHAPE_RATIO)
+        self.assertLess(len(code), scanner.MIN_BLOCK_LINES)
 
     def test_blank_comment_lines_do_not_count_against_the_ratio(self):
         """주석 처리된 코드 안의 빈 줄은 산문이 아니다. 비율 분모에서 제외한다."""

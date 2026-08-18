@@ -1,8 +1,10 @@
+import json
 import os
 import sys
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "fixtures"))
 sys.path.insert(0, os.path.join(
@@ -75,10 +77,37 @@ class TestOrderingAndLookFirst(ScanCase):
         self.assertFalse(by_path["notes.py"]["look_first"])
 
     def test_look_first_is_not_a_grade(self):
-        """스캔 출력에 등급 단어가 없어야 한다."""
-        blob = str(self.data).lower()
-        for word in ("safe to delete", '"safe"', '"danger"', '"conditional"'):
+        """스캔 출력에 등급 단어가 없어야 한다.
+
+        `str(self.data)`가 아니라 `json.dumps`로 검사한다. dict를 str()로 찍으면
+        문자열이 홑따옴표로 렌더링되므로 쌍따옴표를 낀 검사 세 건이 영원히
+        발화하지 못했고, 후보마다 `"grade": "safe"`를 넣어도 전 테스트가 통과했다.
+        실제로 스캔이 내보내는 형식(JSON)을 검사한다."""
+        blob = json.dumps(self.data, ensure_ascii=False).lower()
+        for word in ("safe to delete", "do not delete",
+                     '"grade"', '"safe"', '"danger"', '"conditional"'):
             self.assertNotIn(word, blob)
+
+    def test_no_grade_word_survives_anywhere_in_the_structure(self):
+        """위 검사는 등급 단어가 값으로 들어온 경우를 잡는다. 키 이름이나 리스트
+        원소로 숨어드는 경우까지 잡으려면 구조를 직접 훑어야 한다."""
+        graded = {"safe", "danger", "conditional", "grade"}
+        found = []
+
+        def walk(node, where):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if isinstance(key, str) and key.lower() in graded:
+                        found.append("{}.{}".format(where, key))
+                    walk(value, "{}.{}".format(where, key))
+            elif isinstance(node, list):
+                for i, item in enumerate(node):
+                    walk(item, "{}[{}]".format(where, i))
+            elif isinstance(node, str) and node.strip().lower() in graded:
+                found.append("{} = {!r}".format(where, node))
+
+        walk(self.data, "scan")
+        self.assertEqual(found, [], found)
 
 
 class TestLimits(ScanCase):
@@ -111,6 +140,38 @@ class TestLimits(ScanCase):
         capped = scanmod.scan(self.info["repo"], ".", max_candidates=1, now=NOW)
         self.assertEqual(len(capped["candidates"]), 1)
         self.assertTrue(capped["limits"]["candidate_cap_reached"])
+
+    def test_file_counts_add_up_to_what_git_tracks_even_under_the_cap(self):
+        """상한에 걸려 멈추면 남은 파일은 어느 칸에도 세어지지 않은 채 사라졌다.
+        그러면 공개하는 총계가 '우리가 어쩌다 닿은 파일 수'가 되고, 상한이 어디서
+        걸렸느냐에 따라 총계 자체가 흔들린다. 총계는 언제나 그 경로 아래에서 git이
+        추적하는 파일 수와 같아야 한다."""
+        tracked = len([l for l in gitq.run_git(self.info["repo"],
+                                                ["ls-files", "--", "."]).splitlines()
+                       if l.strip()])
+        capped = scanmod.scan(self.info["repo"], ".", max_candidates=1, now=NOW)
+        limits = capped["limits"]
+        self.assertTrue(limits["candidate_cap_reached"])
+        counted = (limits["files_scanned"]
+                   + limits["files_skipped_unsupported"]
+                   + limits["files_skipped_vendored"]
+                   + limits["files_skipped_generated"]
+                   + limits["files_skipped_too_large"]
+                   + limits["files_missing_at_head"]
+                   + limits["files_not_reached"])
+        self.assertEqual(counted, tracked, limits)
+        # The premise: with this cap at least one listed file really is
+        # left unopened, so the new counter has something to count.
+        self.assertGreater(limits["files_not_reached"], 0, limits)
+
+    def test_unexamined_files_are_disclosed_in_notes(self):
+        capped = scanmod.scan(self.info["repo"], ".", max_candidates=1, now=NOW)
+        self.assertTrue(
+            any("never examined" in n for n in capped["notes"]),
+            capped["notes"])
+
+    def test_files_not_reached_is_zero_when_the_cap_is_not_hit(self):
+        self.assertEqual(self.data["limits"]["files_not_reached"], 0)
 
 
 class TestUnsupportedExtensions(ScanCase):
@@ -184,6 +245,181 @@ class TestOldestOfSeveralBlameShas(unittest.TestCase):
                  if c["path"] == self.info["path"])
         self.assertEqual(c["commented_out_by"]["sha"], self.info["older_sha"])
         self.assertEqual(c["touched_by_commits"], 2)
+
+
+class TestTimezoneSkew(unittest.TestCase):
+    """Commit dates are `%aI`, which carries a per-commit UTC offset, so
+    text order is not instant order across timezones. Every other fixture
+    in `make_fixture_repo` passes offset-free dates, which is why a
+    lexicographic sort passed for the wrong reason until now.
+
+    See `build_timezone_skew` for the exact dates: with a string sort the
+    chore commit is reported as the one that commented `alpha.py` out, the
+    incident commit disappears from the output entirely, `age_days` is
+    measured from the wrong commit, and `look_first` goes quiet on the one
+    candidate that earned it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.info = make_fixture_repo.build_timezone_skew(cls.tmp.name)
+        cls.data = scanmod.scan(cls.info["repo"], ".", now=NOW)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_the_fixture_premise_is_two_shas_whose_orders_disagree(self):
+        shas = gitq.blame_shas(self.info["repo"], self.info["alpha_path"],
+                                self.info["start"], self.info["end"], rev="HEAD")
+        self.assertEqual(set(shas),
+                          {self.info["outage_sha"], self.info["chore_sha"]}, shas)
+
+    def test_oldest_by_instant_not_by_text(self):
+        c = next(c for c in self.data["candidates"]
+                 if c["path"] == self.info["alpha_path"])
+        self.assertEqual(c["commented_out_by"]["sha"], self.info["outage_sha"])
+        self.assertEqual(c["touched_by_commits"], 2)
+
+    def test_look_first_survives_the_sort(self):
+        """The incident commit is the one carrying the urgency vocabulary.
+        Picking the chore instead does not merely mislabel the author, it
+        turns the hint off on the candidate that most needs it."""
+        c = next(c for c in self.data["candidates"]
+                 if c["path"] == self.info["alpha_path"])
+        self.assertTrue(c["look_first"])
+
+    def test_candidate_order_is_chronological_across_timezones(self):
+        paths = [c["path"] for c in self.data["candidates"]]
+        # beta.py's date string sorts first; its instant is the newest.
+        self.assertEqual(paths[0], self.info["alpha_path"], paths)
+        self.assertEqual(paths[1], self.info["beta_path"], paths)
+
+
+class TestInstantSortKey(unittest.TestCase):
+    """A date git cannot be parsed out of must still sort deterministically,
+    and must not sort as if it were the oldest thing in the repository."""
+
+    def test_offset_is_honored(self):
+        self.assertLess(scanmod._instant("2020-03-02T02:00:00+09:00"),
+                         scanmod._instant("2020-03-01T20:00:00-05:00"))
+
+    def test_naive_dates_are_read_as_utc(self):
+        self.assertEqual(scanmod._instant("2020-03-01T17:00:00"),
+                          scanmod._instant("2020-03-01T17:00:00+00:00"))
+
+    def test_unparseable_dates_sort_last_and_equal_each_other(self):
+        unknown = scanmod._instant(None)
+        self.assertEqual(unknown, scanmod._instant("not a date"))
+        self.assertGreater(unknown, scanmod._instant("2999-12-31T23:59:59+00:00"))
+
+
+class TestDirtyWorkingTree(unittest.TestCase):
+    """The scan reads content from HEAD, so it must blame HEAD too.
+
+    Blaming the working tree with HEAD's line numbers has two failure
+    modes, both reproduced here in one repository: an edited line inside
+    the range comes back as the all-zeros "not committed yet" sha and used
+    to abort the entire run, and a block deleted from the working tree
+    used to make `blame -L` answer for different lines, or fail, either
+    way disclosing nothing about the block that is really at HEAD."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.info = make_fixture_repo.build_commented_out(cls.tmp.name)
+        cls.clean = scanmod.scan(cls.info["repo"], ".", now=NOW)
+
+        repo = cls.info["repo"]
+        # billing.py: one commented line edited but never committed.
+        billing = os.path.join(repo, "billing.py")
+        with open(billing, encoding="utf-8") as fh:
+            text = fh.read()
+        with open(billing, "w", encoding="utf-8") as fh:
+            fh.write(text.replace("range(3)", "range(9)"))
+        # notes.py: the block deleted outright in the working tree, so
+        # HEAD's line numbers point past the end of the file on disk.
+        notes = os.path.join(repo, "notes.py")
+        with open(notes, "w", encoding="utf-8") as fh:
+            fh.write("def helper():\n    return 1\n")
+
+        cls.dirty = scanmod.scan(repo, ".", now=NOW)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def _shape(self, data):
+        return [(c["path"], c["start"], c["end"],
+                 (c["commented_out_by"] or {}).get("sha"), c["look_first"])
+                for c in data["candidates"]]
+
+    def test_the_dirt_is_really_uncommitted(self):
+        status = gitq.run_git(self.info["repo"], ["diff", "--name-only"])
+        self.assertEqual(sorted(status.split()), ["billing.py", "notes.py"])
+
+    def test_a_dirty_tree_changes_nothing_about_the_answer(self):
+        self.assertEqual(self._shape(self.dirty), self._shape(self.clean))
+
+    def test_every_candidate_still_carries_its_commit(self):
+        for c in self.dirty["candidates"]:
+            self.assertIsNotNone(c["commented_out_by"], c["path"])
+
+    def test_the_incident_commit_is_still_the_answer_for_billing(self):
+        c = next(c for c in self.dirty["candidates"] if c["path"] == "billing.py")
+        self.assertEqual(c["commented_out_by"]["sha"], self.info["outage_sha"])
+
+
+class TestUnusableBlameSha(ScanCase):
+    """A sha blame reports but `commit_meta` cannot read costs one
+    candidate its facts, never the run.
+
+    The lookup used to sit outside the only try/except in the loop, so a
+    single unreadable sha raised through `main`, which printed one line and
+    exited 1 having emitted nothing: every other file's candidates were
+    thrown away because one file was unusable. Forced here with a sha that
+    is well-formed and absent from the repository, which is deterministic
+    in a way a race against a real dirty tree is not."""
+
+    ABSENT_SHA = "f" * 40
+
+    def _scan_with_one_bad_sha(self):
+        real = gitq.blame_shas
+        first = []
+
+        def fake(repo, path, start, end, rev=None):
+            if not first:
+                first.append(path)
+            if path == first[0]:
+                return [self.ABSENT_SHA]
+            return real(repo, path, start, end, rev=rev)
+
+        with mock.patch.object(scanmod.gitq, "blame_shas", side_effect=fake):
+            return scanmod.scan(self.info["repo"], ".", now=NOW), first[0]
+
+    def test_the_run_survives_and_keeps_every_candidate(self):
+        data, poisoned = self._scan_with_one_bad_sha()
+        self.assertEqual(len(data["candidates"]), len(self.data["candidates"]))
+        # Same candidates, though the one with no facts now sorts last.
+        self.assertEqual(sorted(c["path"] for c in data["candidates"]),
+                          sorted(c["path"] for c in self.data["candidates"]))
+        self.assertIn(poisoned, [c["path"] for c in data["candidates"]])
+
+    def test_the_affected_candidate_reports_no_commit_and_says_so(self):
+        data, poisoned = self._scan_with_one_bad_sha()
+        hit = next(c for c in data["candidates"] if c["path"] == poisoned)
+        self.assertIsNone(hit["commented_out_by"])
+        self.assertEqual(hit["touched_by_commits"], 0)
+        self.assertFalse(hit["look_first"])
+        self.assertTrue(any(poisoned in n and "blame failed" in n
+                            for n in data["notes"]), data["notes"])
+
+    def test_the_other_candidates_keep_their_facts(self):
+        data, poisoned = self._scan_with_one_bad_sha()
+        others = [c for c in data["candidates"] if c["path"] != poisoned]
+        self.assertTrue(others)
+        for c in others:
+            self.assertIsNotNone(c["commented_out_by"], c["path"])
 
 
 if __name__ == "__main__":
