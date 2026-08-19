@@ -1273,3 +1273,162 @@ def build_block_comment(dest: str, *, name: str = "block_comment") -> dict:
         "path": "Billing.kt",
         "sha": sha,
     }
+
+
+def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
+    """Targets for `patch.py`, one per comment marker, in a working tree
+    that matches HEAD.
+
+    `git apply` patches the working tree, so what this fixture is really
+    for is the file on disk; HEAD matters only because a trace reads its
+    snippet from there, and a test that wants the "the file moved on since
+    the investigation" refusal makes the two disagree by editing the file
+    after the trace, not before.
+
+    Each target line is indented, because the KEEP comment has to line up
+    with it, and each has at least three lines above and below it so a
+    three-line context hunk is a full one rather than a clamped edge case.
+    `tail.py`'s target is the last line of a file with no trailing
+    newline, which is the one shape a unified diff has to say something
+    extra about (`\\ No newline at end of file`). `crlf.py` is the same
+    Python target with CRLF endings, `blob.py` is a NUL-byte file behind a
+    known comment marker, and `docs/fee.rst` is an extension no marker is
+    known for; the last two exist to be refused.
+
+    Every returned line number is 1-based and points at the first line of
+    the target, the line the comment goes directly above.
+    """
+    repo = _init(dest, name)
+
+    python = repo / "billing" / "fee.py"
+    python.parent.mkdir(parents=True)
+    python.write_text(
+        "import math\n"                                  # 1
+        "\n"                                             # 2
+        "\n"                                             # 3
+        "def charge(order):\n"                           # 4
+        "    if order.already_charged:\n"                # 5
+        "        return {'status': 'duplicate'}\n"       # 6  <- target
+        "    order.mark_processed()\n"                   # 7
+        "    return order.total\n"                       # 8
+        "\n"                                             # 9
+        "\n"                                             # 10
+        "def refund(order):\n"                           # 11
+        "    return -order.total\n"                      # 12
+    )
+
+    kotlin = repo / "Fee.kt"
+    kotlin.write_text(
+        "package billing\n"                              # 1
+        "\n"                                             # 2
+        "class Fee {\n"                                  # 3
+        "    fun charge(order: Order) {\n"               # 4
+        "        if (order.alreadyCharged) {\n"          # 5
+        "            return\n"                           # 6  <- target
+        "        }\n"                                    # 7
+        "        order.markProcessed()\n"                # 8
+        "    }\n"                                        # 9
+        "}\n"                                            # 10
+    )
+
+    sql = repo / "migrations" / "0001_fee.sql"
+    sql.parent.mkdir(parents=True)
+    sql.write_text(
+        "create table fee (\n"                           # 1
+        "    id bigint primary key,\n"                   # 2
+        "    order_id bigint not null,\n"                # 3
+        "    amount numeric(12, 2) not null,\n"          # 4  <- target
+        "    created_at timestamptz not null\n"          # 5
+        ");\n"                                           # 6
+        "\n"                                             # 7
+        "create index fee_order_id on fee (order_id);\n" # 8
+    )
+
+    # The target is the first line of the file, so the hunk has no context
+    # above it at all and starts at line 1.
+    head = repo / "head.py"
+    head.write_text(
+        "import legacy_shim\n"                           # 1  <- target
+        "import math\n"                                  # 2
+        "\n"                                             # 3
+        "\n"                                             # 4
+        "def boot():\n"                                  # 5
+        "    return legacy_shim.boot()\n"                # 6
+    )
+
+    # No trailing newline: the target is the last line of the file.
+    tail = repo / "tail.py"
+    tail.write_text(
+        "def boot():\n"                                  # 1
+        "    configure()\n"                              # 2
+        "    return run(retries=3)"                      # 3  <- target
+    )
+
+    # An extension absent from scanner.COMMENT_MARKERS, so there is a real
+    # target for the "no marker is known" refusal to refuse.
+    docs = repo / "docs" / "fee.rst"
+    docs.parent.mkdir(parents=True)
+    docs.write_text(
+        "Fees\n"                                         # 1
+        "====\n"                                         # 2
+        "\n"                                             # 3
+        "The duplicate guard is load bearing.\n"         # 4  <- target
+        "\n"                                             # 5
+        "See the billing runbook.\n"                     # 6
+    )
+
+    # A NUL byte behind an extension whose comment marker *is* known, so
+    # the "this is not text" refusal is reached on its own merits rather
+    # than shadowed by the "no marker for this extension" one.
+    binary = repo / "blob.py"
+    binary.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00")
+
+    # CRLF, so the trace's snippet (read through `str.splitlines`, which
+    # drops the "\r") and the working tree line (which keeps it) disagree
+    # on bytes while naming the same line.
+    crlf = repo / "crlf.py"
+    crlf.write_bytes(
+        b"import math\r\n"                                # 1
+        b"\r\n"                                           # 2
+        b"\r\n"                                           # 3
+        b"def charge(order):\r\n"                         # 4
+        b"    if order.already_charged:\r\n"              # 5
+        b"        return {'status': 'duplicate'}\r\n"     # 6  <- target
+        b"    order.mark_processed()\r\n"                 # 7
+        b"    return order.total\r\n"                     # 8
+    )
+
+    korean = repo / "결제" / "수수료.py"
+    korean.parent.mkdir(parents=True)
+    korean.write_text(
+        "import math\n"                                  # 1
+        "\n"                                             # 2
+        "\n"                                             # 3
+        "def charge(order):\n"                           # 4
+        "    if order.already_charged:\n"                # 5
+        "        return {'status': 'duplicate'}\n"       # 6  <- target
+        "    order.mark_processed()\n"                   # 7
+        "    return order.total\n"                       # 8
+    )
+
+    sha = _commit(repo, "hotfix: prevent double charge (#4127)",
+                  "2019-11-08T02:14:00")
+
+    return {
+        "repo": str(repo),
+        "sha": sha,
+        "python": {"path": "billing/fee.py", "start": 6, "end": 6,
+                    "indent": "        "},
+        "kotlin": {"path": "Fee.kt", "start": 6, "end": 6,
+                    "indent": "            "},
+        "sql": {"path": "migrations/0001_fee.sql", "start": 4, "end": 4,
+                 "indent": "    "},
+        "head": {"path": "head.py", "start": 1, "end": 1, "indent": ""},
+        "tail": {"path": "tail.py", "start": 3, "end": 3, "indent": "    "},
+        "docs": {"path": "docs/fee.rst", "start": 4, "end": 4, "indent": ""},
+        "binary": {"path": "blob.py", "start": 1, "end": 1, "indent": ""},
+        "crlf": {"path": "crlf.py", "start": 6, "end": 6,
+                  "indent": "        "},
+        "korean": {"path": "결제/수수료.py", "start": 6, "end": 6,
+                    "indent": "        "},
+    }
