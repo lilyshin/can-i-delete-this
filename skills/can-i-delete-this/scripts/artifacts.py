@@ -446,6 +446,17 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
     guard = tests[0] if tests else None
 
     if grade == "danger":
+        # patch.py turns this block into a diff that inserts it into the
+        # target file verbatim, and it checks that every line starts with
+        # the comment marker before doing so, because a line that does not
+        # would be a syntax error once applied. So any line added to this
+        # branch has to carry the marker prefix, or patch.py will refuse to
+        # build a patch at all. That refusal is deliberate for the
+        # unresolved/not_introduction texts returned above (an unverified
+        # attribution must not be nailed into source), and for the
+        # `danger.no_marker` line below it never arises, since patch.py
+        # refuses a markerless file type before it ever calls this.
+        #
         # The comment marker is the target file's own syntax, not chrome
         # (see the module docstring), so it is looked up from scanner's
         # pure extension table, never guessed and never translated. A path

@@ -168,6 +168,18 @@ class TestPatchApplies(_FixtureCase):
         self.assertEqual(raw.count(b"\n"), raw.count(b"\r\n"),
                          "a bare LF line ending was introduced into a CRLF file")
 
+    def test_multi_line_target_puts_the_comment_above_its_first_line(self):
+        t, block, after = self._apply_above_target("block", "#")
+        self.assertIn("KEEP:", block[0])
+        self.assertEqual(after[t["start"] - 1 + len(block)],
+                         "    if order.already_charged:")
+        # The other three lines of the span are untouched and still in
+        # order underneath it.
+        self.assertEqual(after[t["start"] + len(block)],
+                         "        log.info('duplicate charge blocked')")
+        self.assertEqual(after[t["start"] + 2 + len(block)],
+                         "        return {'status': 'duplicate'}")
+
     def test_the_whole_comment_block_is_inserted_not_just_its_first_line(self):
         info = self.trace_for("python")
         expected = artifacts.skeleton("danger", info,
@@ -325,9 +337,56 @@ class TestRefusals(_FixtureCase):
         refused = self._refuse(info, _verdict(self.info["sha"]))
         self.assertEqual(refused.code, "target-moved")
 
-    def test_binary_file_is_refused(self):
+    def _edit_line(self, key, lineno, text):
+        """Replace one line of a fixture file on disk, in place."""
+        full = os.path.join(self.repo, self.target(key)["path"])
+        with open(full, encoding="utf-8", newline="") as fh:
+            lines = fh.read().split("\n")
+        lines[lineno - 1] = text
+        with open(full, "w", encoding="utf-8", newline="") as fh:
+            fh.write("\n".join(lines))
+
+    def test_edit_in_the_middle_of_a_multi_line_target_is_refused(self):
+        """A four-line target whose first line is untouched but whose third
+        line changed. The conclusion was reached about the whole span, so
+        it no longer describes what is on disk, and a KEEP above line 5
+        would assert something about code nobody traced. Comparing only
+        the first line of the span would miss this."""
+        info = self.trace_for("block")
+        self._edit_line("block", 7, "        metrics.count('charge.dup')")
+        refused = self._refuse(info, _verdict(self.info["sha"]))
+        self.assertEqual(refused.code, "target-moved")
+
+    def test_edit_at_the_end_of_a_multi_line_target_is_refused(self):
+        info = self.trace_for("block")
+        self._edit_line("block", 8, "        return {'status': 'dupe'}")
+        refused = self._refuse(info, _verdict(self.info["sha"]))
+        self.assertEqual(refused.code, "target-moved")
+
+    def test_untouched_multi_line_target_is_not_refused(self):
+        """The other half of the pair: nothing in the span changed, so the
+        strictness above must not be refusing everything."""
+        info = self.trace_for("block")
+        self.assertIn("diff --git a/block.py",
+                      patch.build(info, _verdict(self.info["sha"]), repo=self.repo))
+
+    def test_undecodable_file_is_refused(self):
         info = self.trace_for("python")
         info["target"]["path"] = self.target("binary")["path"]
+        refused = self._refuse(info, _verdict(self.info["sha"]))
+        self.assertEqual(refused.code, "binary-file")
+
+    def test_valid_utf8_holding_a_nul_byte_is_refused(self):
+        """git treats a NUL byte as the signal that a file is binary even
+        when it decodes cleanly, and that is the only case the NUL check
+        catches: `blob.py` above never reaches it, since it fails to decode
+        first."""
+        info = self.trace_for("python")
+        info["target"]["path"] = self.target("nul")["path"]
+        with open(os.path.join(self.repo, self.target("nul")["path"]), "rb") as fh:
+            raw = fh.read()
+        self.assertIn(b"\x00", raw)
+        raw.decode("utf-8")  # decodes cleanly, so only the NUL check can refuse it
         refused = self._refuse(info, _verdict(self.info["sha"]))
         self.assertEqual(refused.code, "binary-file")
 
@@ -426,6 +485,48 @@ class TestCli(_FixtureCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), "")
         self.assertIn("danger", result.stderr)
+
+    def test_out_pointing_at_the_target_file_is_refused(self):
+        """`--out` is the only file this tool opens for writing, so the one
+        promise it makes stays true even when the user's own argument aims
+        it at the source file."""
+        t = self._write_json("trace.json", self.trace_for("python"))
+        v = self._write_json("verdict.json", _verdict(self.info["sha"]))
+        target_path = self.target("python")["path"]
+        before = _read(self.repo, target_path)
+
+        result = self._run("--trace", t, "--verdict", v, "--repo", self.repo,
+                           "--out", os.path.join(self.repo, target_path))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(target_path, result.stderr)
+        self.assertEqual(_read(self.repo, target_path), before)
+
+    def test_out_pointing_at_the_target_file_by_a_roundabout_path_is_refused(self):
+        """The check resolves the path, so `billing/../billing/fee.py` is
+        the same refusal and not a way around it."""
+        t = self._write_json("trace.json", self.trace_for("python"))
+        v = self._write_json("verdict.json", _verdict(self.info["sha"]))
+        target_path = self.target("python")["path"]
+        before = _read(self.repo, target_path)
+
+        result = self._run("--trace", t, "--verdict", v, "--repo", self.repo,
+                           "--out", os.path.join(self.repo, "billing", "..",
+                                                 "billing", "fee.py"))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(_read(self.repo, target_path), before)
+
+    def test_out_pointing_at_some_other_file_is_the_users_business(self):
+        """Only the target file is protected. Any other path the user names
+        is a patch file, including one inside the repository."""
+        t = self._write_json("trace.json", self.trace_for("python"))
+        v = self._write_json("verdict.json", _verdict(self.info["sha"]))
+        out = os.path.join(self.repo, "billing", "keep.patch")
+        result = self._run("--trace", t, "--verdict", v, "--repo", self.repo,
+                           "--out", out)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.path.exists(out))
 
     def test_refusal_writes_no_out_file(self):
         t = self._write_json("trace.json", self.trace_for("python"))

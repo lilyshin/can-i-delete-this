@@ -1290,10 +1290,12 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
     three-line context hunk is a full one rather than a clamped edge case.
     `tail.py`'s target is the last line of a file with no trailing
     newline, which is the one shape a unified diff has to say something
-    extra about (`\\ No newline at end of file`). `crlf.py` is the same
-    Python target with CRLF endings, `blob.py` is a NUL-byte file behind a
-    known comment marker, and `docs/fee.rst` is an extension no marker is
-    known for; the last two exist to be refused.
+    extra about (`\\ No newline at end of file`). `block.py`'s target
+    spans four lines, so a comparison that only checked the first line of
+    a target would be caught. `crlf.py` is the same Python target with
+    CRLF endings. `blob.py` (undecodable bytes), `nul.py` (valid UTF-8
+    holding a NUL byte) and `docs/fee.rst` (an extension no marker is
+    known for) exist to be refused.
 
     Every returned line number is 1-based and points at the first line of
     the target, the line the comment goes directly above.
@@ -1344,6 +1346,25 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
         "create index fee_order_id on fee (order_id);\n" # 8
     )
 
+    # A target spanning several lines, so the recorded-versus-disk
+    # comparison has more than one line to compare. Every other target
+    # here is a single line, which is exactly how a first-line-only
+    # comparison could pass a whole test suite: an edit to line 6 or 8 of
+    # this span has to be caught even though line 5 is untouched.
+    block = repo / "block.py"
+    block.write_text(
+        "import math\n"                                  # 1
+        "\n"                                             # 2
+        "\n"                                             # 3
+        "def charge(order):\n"                           # 4
+        "    if order.already_charged:\n"                # 5  <- target start
+        "        log.info('duplicate charge blocked')\n" # 6
+        "        metrics.count('charge.duplicate')\n"    # 7
+        "        return {'status': 'duplicate'}\n"       # 8  <- target end
+        "    order.mark_processed()\n"                   # 9
+        "    return order.total\n"                       # 10
+    )
+
     # The target is the first line of the file, so the hunk has no context
     # above it at all and starts at line 1.
     head = repo / "head.py"
@@ -1377,11 +1398,21 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
         "See the billing runbook.\n"                     # 6
     )
 
-    # A NUL byte behind an extension whose comment marker *is* known, so
-    # the "this is not text" refusal is reached on its own merits rather
-    # than shadowed by the "no marker for this extension" one.
+    # Two ways for a file behind a known comment marker to fail to be
+    # text, because they are two different code paths and one shadows the
+    # other. `blob.py` does not decode as UTF-8 at all. `nul.py` decodes
+    # perfectly well (a NUL byte is valid UTF-8) and is binary only by
+    # git's own convention that a NUL byte makes it so, which is the case
+    # the NUL check uniquely exists for.
     binary = repo / "blob.py"
     binary.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00")
+
+    nul = repo / "nul.py"
+    nul.write_bytes(
+        b"def charge(order):\n"
+        b"    return order.total\x00\n"
+        b"    # unreachable\n"
+    )
 
     # CRLF, so the trace's snippet (read through `str.splitlines`, which
     # drops the "\r") and the working tree line (which keeps it) disagree
@@ -1423,10 +1454,13 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
                     "indent": "            "},
         "sql": {"path": "migrations/0001_fee.sql", "start": 4, "end": 4,
                  "indent": "    "},
+        "block": {"path": "block.py", "start": 5, "end": 8,
+                   "indent": "    "},
         "head": {"path": "head.py", "start": 1, "end": 1, "indent": ""},
         "tail": {"path": "tail.py", "start": 3, "end": 3, "indent": "    "},
         "docs": {"path": "docs/fee.rst", "start": 4, "end": 4, "indent": ""},
         "binary": {"path": "blob.py", "start": 1, "end": 1, "indent": ""},
+        "nul": {"path": "nul.py", "start": 2, "end": 2, "indent": "    "},
         "crlf": {"path": "crlf.py", "start": 6, "end": 6,
                   "indent": "        "},
         "korean": {"path": "결제/수수료.py", "start": 6, "end": 6,

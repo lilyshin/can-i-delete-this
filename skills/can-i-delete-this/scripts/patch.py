@@ -85,6 +85,9 @@ _STRINGS = {
             "match what the trace recorded there, so the file moved on "
             "since the investigation and those line numbers may point "
             "somewhere else now. Re-run the trace.",
+        "out-is-target": "--out points at {path}, which is the file this "
+            "patch is for. This tool never writes to the target file; write "
+            "the patch somewhere else and apply it yourself.",
         "not-a-comment": "The artifact for this verdict is not a plain keep "
             "comment (its citation resolves to no commit in this trace, or "
             "to no commit tagged as the introduction), so it cannot be "
@@ -119,6 +122,8 @@ _STRINGS = {
         "target-moved": "디스크의 {path} {start}-{end}줄이 trace가 기록한 내용과 "
             "다릅니다. 조사 시점 이후로 파일이 바뀌어 그 줄 번호가 다른 곳을 "
             "가리킬 수 있습니다. trace를 다시 실행하세요.",
+        "out-is-target": "--out이 이 패치의 대상 파일인 {path}를 가리킵니다. 이 도구는 "
+            "대상 파일에 쓰지 않습니다. 패치는 다른 곳에 쓰고 적용은 직접 하세요.",
         "not-a-comment": "이 검증(verdict)의 결과물은 순수한 KEEP 주석이 아닙니다"
             "(인용한 커밋이 이 trace에 없거나, 도입 커밋으로 표시된 것이 없습니다). "
             "소스에 넣을 수 없으니 artifacts.py를 실행해 내용을 읽고 그에 따라 "
@@ -157,6 +162,7 @@ class Refused(Exception):
     - outside-repo: the target path does not resolve inside the repo.
     - missing-file / binary-file / unreadable-file: the working tree file
       could not be read as text.
+    - out-is-target: the CLI's `--out` names the target file itself.
     - out-of-range: the target line numbers fall outside the file.
     - target-moved: the file on disk differs from what the trace recorded
       at those line numbers.
@@ -392,6 +398,29 @@ def build(trace_data, verdict_data, *, repo, lang="en"):
     return _unified_diff(path, lines, ends_with_newline, start, comment_lines)
 
 
+def check_out_path(repo, trace_data, out, lang="en"):
+    """Refuse an `--out` that names the target file itself.
+
+    The one thing this module promises is that it does not write to the
+    user's source file, and `--out` is the only place it opens a file for
+    writing at all. `--out billing/fee.py` would break that promise
+    through the user's own argument, so the promise is made unconditional
+    here instead of resting on the user not doing that. Any other `--out`
+    is the user's business.
+
+    Called before `build`, so a refusal costs nothing and the reason is
+    about the argument rather than about the patch.
+    """
+    if not out or not isinstance(trace_data, dict):
+        return
+    target = trace_data.get("target")
+    path = target.get("path") if isinstance(target, dict) else None
+    if not isinstance(path, str) or not path:
+        return
+    if os.path.realpath(out) == os.path.realpath(os.path.join(repo, path)):
+        raise _refuse(lang, "out-is-target", path=path)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Emit the danger keep-comment as a patch file. Prints a "
@@ -406,7 +435,8 @@ def main():
                          "`git apply` patches.")
     ap.add_argument("--out", default=None,
                     help="write the patch here instead of to stdout. Nothing "
-                         "is written when the patch is refused.")
+                         "is written when the patch is refused, and this may "
+                         "not be the target file itself.")
     ap.add_argument("--lang", default="en",
                     help="language for this tool's own wording and the keep "
                          "comment's (en, ko; unknown values fall back to en). "
@@ -423,6 +453,7 @@ def main():
         ap.error("--repo is required: the trace records no repo of its own")
 
     try:
+        check_out_path(repo, trace_data, args.out, lang=args.lang)
         diff = build(trace_data, verdict_data, repo=repo, lang=args.lang)
     except Refused as exc:
         print("refused: {}".format(exc), file=sys.stderr)
