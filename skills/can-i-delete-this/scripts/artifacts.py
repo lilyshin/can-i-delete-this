@@ -4,11 +4,19 @@ The skill never writes to the user's files. It produces text and, when
 asked, puts it on the clipboard.
 
 Every piece of chrome this module writes around the trace/verdict data
-(the "// KEEP:", the checklist wording, the "Grade:"/"Target:" labels, the
-unresolved-citation message, and the placeholder words used when a field
-is missing) is looked up in `_STRINGS` by `lang`; see that dict's
-docstring. SHAs, paths, commit subjects, author names and dates are always
-data read from the trace or the verdict, never translated.
+(the KEEP-comment wording, the checklist wording, the "Grade:"/"Target:"
+labels, the unresolved-citation message, and the placeholder words used
+when a field is missing) is looked up in `_STRINGS` by `lang`; see that
+dict's docstring. SHAs, paths, commit subjects, author names and dates are
+always data read from the trace or the verdict, never translated.
+
+The KEEP comment's own comment marker (`#`, `//`, `--`, ...) is not chrome:
+it is the target file's syntax, not this module's wording, so it comes
+from `scanner.marker_for(path)` and is identical in every `lang`. When the
+target's extension is not in `scanner.COMMENT_MARKERS`, no marker is
+guessed; the KEEP text is emitted bare, plus one sentence (itself chrome,
+translated like everything else) telling the reader to add their own
+language's marker by hand.
 """
 
 import argparse
@@ -18,6 +26,7 @@ import shutil
 import subprocess
 
 import citation
+import scanner
 
 CLIPBOARD_TOOLS = (
     ("pbcopy", ["pbcopy"]),
@@ -57,9 +66,11 @@ _STRINGS = {
             "it is tagged as the real introduction (role: introduced, or no role at "
             "all). This trace has nothing to attribute this artifact to.",
 
-        "danger.keep": "// KEEP: {subject} ({day}, {sha})",
-        "danger.guard": "// Before deleting, confirm {guard} still passes.",
-        "danger.warning": "// WARNING: no test guards this. Add one before touching it.",
+        "danger.keep": "{marker}KEEP: {subject} ({day}, {sha})",
+        "danger.guard": "{marker}Before deleting, confirm {guard} still passes.",
+        "danger.warning": "{marker}WARNING: no test guards this. Add one before touching it.",
+        "danger.no_marker": "No comment marker is known for this file type; "
+            "prefix each line above with your language's own comment marker.",
 
         "conditional.title": "Deletion checklist for {path}:{start}",
         "conditional.condition": "- [ ] Confirm the condition that made this "
@@ -135,10 +146,12 @@ _STRINGS = {
             "어느 것도 실제 도입(role: introduced 또는 role 없음)으로 표시되어 있지 "
             "않습니다. 이 trace에는 이 결과물의 근거로 삼을 대상이 없습니다.",
 
-        "danger.keep": "// 유지: {subject} ({day}, {sha})",
-        "danger.guard": "// 삭제하기 전에 {guard}가 통과하는지 확인하세요.",
-        "danger.warning": "// 주의: 이 코드를 지켜주는 테스트가 없습니다. 손대기 전에 "
+        "danger.keep": "{marker}유지: {subject} ({day}, {sha})",
+        "danger.guard": "{marker}삭제하기 전에 {guard}가 통과하는지 확인하세요.",
+        "danger.warning": "{marker}주의: 이 코드를 지켜주는 테스트가 없습니다. 손대기 전에 "
             "테스트를 추가하세요.",
+        "danger.no_marker": "이 파일 종류에 해당하는 주석 기호를 알 수 없습니다. 위 각 줄 "
+            "앞에 사용하는 언어의 주석 기호를 직접 붙이세요.",
 
         "conditional.title": "{path}:{start} 삭제 체크리스트:",
         "conditional.condition": "- [ ] 이 코드가 필요했던 조건이 더 이상 유효하지 "
@@ -416,7 +429,7 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
 
     # Every field below is checked with isinstance() before use, not coerced
     # with str(). str(x) turns a missing/None date into "" or "None" and lets
-    # it leak straight into the rendered text (e.g. "// KEEP: hotfix (None,
+    # it leak straight into the rendered text (e.g. "KEEP: hotfix (None,
     # a3f8c21)"); isinstance() plus an explicit fallback keeps that from
     # happening when introduction_candidates is empty, as it is for F4-style
     # squash cases (see tests/test_trace_cases.py::test_reports_why_it_came_up_empty).
@@ -433,13 +446,24 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
     guard = tests[0] if tests else None
 
     if grade == "danger":
-        lines = [_t(lang, "danger.keep",
+        # The comment marker is the target file's own syntax, not chrome
+        # (see the module docstring), so it is looked up from scanner's
+        # pure extension table, never guessed and never translated. A path
+        # that is not a string (missing target) gets no marker either,
+        # the same isinstance-over-str() stance as sha/subject/day above.
+        raw_path = target.get("path")
+        marker = scanner.marker_for(raw_path) if isinstance(raw_path, str) else None
+        marker_prefix = marker + " " if marker else ""
+
+        lines = [_t(lang, "danger.keep", marker=marker_prefix,
                     subject=subject or _t(lang, "common.reason_unknown"),
                     day=day, sha=sha)]
         if guard:
-            lines.append(_t(lang, "danger.guard", guard=guard))
+            lines.append(_t(lang, "danger.guard", marker=marker_prefix, guard=guard))
         else:
-            lines.append(_t(lang, "danger.warning"))
+            lines.append(_t(lang, "danger.warning", marker=marker_prefix))
+        if marker is None:
+            lines.append(_t(lang, "danger.no_marker"))
         return "\n".join(lines)
 
     if grade == "conditional":
