@@ -1,11 +1,11 @@
 """Turn a `danger` keep-comment into a patch file the user applies.
 
-This project never writes to the user's files: `gitq` allows sixteen
-read-only git subcommands and there is no write path anywhere. This
-module keeps that promise, which is the only reason it is allowed to
-exist. It writes a unified diff to stdout, or to a path the user named
-with `--out`, and nothing else. It does not open the target source file
-for writing, and it does not run `git apply`. The user reads the diff and
+This project never edits the code it is asked about: `gitq` allows sixteen
+read-only git subcommands and no script touches the file under
+investigation. This module keeps that promise, which is the only reason it
+is allowed to exist. It writes a unified diff to stdout, or to a path the
+user named with `--out`, and nothing else. It does not open the target
+source file for writing, and it does not run `git apply`. The user reads the diff and
 applies it, or does not.
 
 Two things follow from `git apply` patching the *working tree*:

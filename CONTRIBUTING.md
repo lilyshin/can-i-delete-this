@@ -12,17 +12,18 @@
   `skills/can-i-delete-this/CREATION-LOG.md` for two cases where this
   project's own untested assumptions turned out to be wrong once a fixture
   was built.
-- **The only file this skill writes is one the user named.** `gitq.py` only
-  runs read-only git subcommands: `blame`, `log`, `show`, `diff`, `rev-parse`,
+- **No script edits the code under investigation, and none runs `git apply`.**
+  `gitq.py` only runs read-only git subcommands: `blame`, `log`, `show`, `diff`, `rev-parse`,
   `rev-list`, `cat-file`, `ls-files`, `ls-tree`, `merge-base`, `name-rev`,
   `describe`, `for-each-ref`, `shortlog`, `var`, `grep` (`rev-list` is
   allowed but not actually called by any production code path today; `grep`
   searches the working tree only, used to judge needle rarity). Do not add a
   write path there, and do not add `Write` to any plugin manifest's
-  `capabilities`. The one exception is `patch.py --out`, which writes the
-  patch file the user asked for and refuses when that path is the file under
-  investigation; no script edits the target of an investigation, and none
-  runs `git apply`.
+  `capabilities`. Two scripts do write a file, and a new one needs the same
+  justification: `render.py` writes the HTML report (system temp directory
+  by default, or wherever `--outdir` points), and `patch.py --out` writes a
+  patch at the path the user named, refusing when that path is the file
+  under investigation.
 - **A denylisted flag is not the only guard against a git subprocess
   running an external program on our behalf.** `WRITE_FLAG_PREFIXES`
   refuses known write-adjacent flags (including short forms, e.g. `-O` for

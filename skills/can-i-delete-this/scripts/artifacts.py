@@ -1,7 +1,7 @@
 """Turn a verdict into something the user can paste somewhere useful.
 
-The skill never writes to the user's files. It produces text and, when
-asked, puts it on the clipboard.
+This module writes nothing. It produces text and, when asked, puts it on
+the clipboard; what happens to that text is the user's call.
 
 Every piece of chrome this module writes around the trace/verdict data
 (the KEEP-comment wording, the checklist wording, the "Grade:"/"Target:"

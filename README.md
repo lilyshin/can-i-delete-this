@@ -209,20 +209,22 @@ extra read; discarding the real introducing commit cannot be undone.
 
 ## Safety
 
-- **Read-only.** `gitq.py` allows sixteen read subcommands and nothing else.
-  No git object, no index entry, and no file of yours is written except the
-  patch file you name with `patch.py --out`.
+- **Read-only against git.** `gitq.py` allows sixteen read subcommands and
+  nothing else. No git object and no index entry is ever written.
 - **Sanitized environment, not just a flag denylist.** Every invocation
   forces `-c core.pager=cat` and `-c diff.external=` and overrides the
   pager, external-diff, editor and askpass variables, so a repo's own config
   cannot name a program to exec even through a flag this project has not
   thought of. `CONTRIBUTING.md` has the full reasoning, including the `-O`
   hole that prompted it.
-- **Never writes a file it was not told to write.** No comment injected, no
-  PR opened, no file edited. Scripts print text; `--copy` puts it on your
-  clipboard because you asked, and `patch.py --out` writes the patch file
-  you named, never the file under investigation, and never by running
-  `git apply`.
+- **Never edits your code.** No comment injected, no PR opened, no file of
+  yours edited. Two scripts do write a file, and neither is source:
+  `render.py` writes the HTML report, to your system temp directory unless
+  you point `--outdir` somewhere, and `patch.py --out` writes the patch file
+  at the path you named, refusing when that path is the file under
+  investigation. Applying the patch is your `git apply`, never ours.
+  Everything else is printed, and `--copy` reaches your clipboard because
+  you asked.
 - **No network, no third-party dependency.** Standard library, Python 3.9+.
 
 ## License
@@ -282,9 +284,12 @@ squash가 실제 도입 커밋 위에 쌓이면 blame은 맨 위에 있는 것�
 텍스트만이 그것들을 갈랐습니다. 발췌는 저장소의 실제 코드라서 체크리스트를
 이슈에 붙이면 그 코드도 함께 갑니다. 그 사실을 체크리스트 자체가 밝힙니다.
 
-설치는 `/plugin marketplace add lilyshin/can-i-delete-this`. `patch.py --out`으로
-직접 지정한 패치 파일 외에는 사용자 파일에 쓰지 않고, 네트워크를 쓰지 않고,
-표준 라이브러리 외 의존성이 없습니다.
+설치는 `/plugin marketplace add lilyshin/can-i-delete-this`. 사용자 코드는
+고치지 않습니다. 파일을 쓰는 곳은 두 군데뿐이고 둘 다 소스가 아닙니다.
+`render.py`가 HTML 리포트를 쓰고(기본 위치는 시스템 임시 디렉토리, `--outdir`로
+바꿀 수 있습니다), `patch.py --out`이 지정한 경로에 패치를 씁니다(그 경로가
+조사 대상 파일이면 거절합니다). 패치 적용은 사용자의 `git apply`입니다.
+네트워크를 쓰지 않고, 표준 라이브러리 외 의존성이 없습니다.
 이슈·PR·커밋 메시지는 한국어로 쓰셔도 됩니다.
 
 </details>
