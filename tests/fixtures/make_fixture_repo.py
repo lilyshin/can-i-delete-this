@@ -1519,3 +1519,80 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
         "korean": {"path": "결제/수수료.py", "start": 6, "end": 6,
                     "indent": "        "},
     }
+
+
+def build_co_changed_cap(dest: str, *, name: str = "co_changed_cap") -> dict:
+    """Two commits, for testing trace()'s co_changed cap and priority
+    ordering (noise.is_test_path first, then the target's own directory,
+    then everything else) against ground truth rather than against
+    "however many paths happen to exist".
+
+    `big_sha` changes the target file plus six other paths in one commit:
+    one test file (`tests/payment_test.py`, nowhere near the target's own
+    directory, so it can only rank first through is_test_path, not through
+    directory proximity), two files beside the target
+    (`billing/helper_one.py`, `billing/helper_two.py`), and three files in
+    an unrelated directory (`other/far_one.py`, `other/far_two.py`,
+    `other/far_three.py`) -- "far" meaning nothing here, deliberately, so a
+    cap that dropped the test file or ranked a far file ahead of a
+    same-directory one would have nothing plausible to justify it.
+
+    `base_sha` changes the target file plus exactly one other path
+    (`misc/base_helper.py`), fewer than any cap this fixture's tests use,
+    to prove a commit that changes fewer paths than the cap is carried
+    whole rather than clipped down to look like a capped one.
+
+    Both shas are meant to be passed to trace()'s `include_commits`
+    (a commit named that way is never noise-filtered and always kept, see
+    trace.py), so this fixture does not need to construct a scenario where
+    blame or pickaxe organically discovers either one; what the co_changed
+    cap and priority ordering do with each commit's changed paths is the
+    only thing under test.
+    """
+    repo = _init(dest, name)
+    target = repo / "billing" / "payment.py"
+    target.parent.mkdir(parents=True)
+    base_other = repo / "misc" / "base_helper.py"
+    base_other.parent.mkdir(parents=True)
+
+    target.write_text("def charge(order):\n    return order.total\n")
+    base_other.write_text("VALUE = 1\n")
+    base_sha = _commit(repo, "feat: add payment module", "2020-01-01T10:00:00")
+
+    test_file = repo / "tests" / "payment_test.py"
+    test_file.parent.mkdir(parents=True)
+    helper_one = repo / "billing" / "helper_one.py"
+    helper_two = repo / "billing" / "helper_two.py"
+    far_dir = repo / "other"
+    far_dir.mkdir(parents=True)
+    far_one = far_dir / "far_one.py"
+    far_two = far_dir / "far_two.py"
+    far_three = far_dir / "far_three.py"
+
+    target.write_text(
+        "def charge(order):\n"
+        "    if order.already_charged:\n"
+        "        return {'status': 'duplicate'}\n"
+        "    return order.total\n"
+    )
+    test_file.write_text("def test_charge():\n    pass\n")
+    helper_one.write_text("def helper_one():\n    pass\n")
+    helper_two.write_text("def helper_two():\n    pass\n")
+    far_one.write_text("X = 1\n")
+    far_two.write_text("X = 2\n")
+    far_three.write_text("X = 3\n")
+    big_sha = _commit(repo, "fix: guard duplicate charge", "2020-02-01T10:00:00")
+
+    return {
+        "repo": str(repo),
+        "path": "billing/payment.py",
+        "line": 2,
+        "base_sha": base_sha,
+        "big_sha": big_sha,
+        "test_path": "tests/payment_test.py",
+        "same_dir_paths": ["billing/helper_one.py", "billing/helper_two.py"],
+        "far_paths": ["other/far_one.py", "other/far_two.py", "other/far_three.py"],
+        "base_other_path": "misc/base_helper.py",
+        "big_total": 6,  # test + 2 same-dir + 3 far, target itself excluded
+        "base_total": 1,  # base_other, target itself excluded
+    }

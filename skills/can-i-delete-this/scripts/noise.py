@@ -26,6 +26,7 @@ candidate list costs the agent one extra read, while discarding the real
 introducing commit is unrecoverable.
 """
 
+import posixpath
 import re
 from dataclasses import dataclass, field
 
@@ -64,6 +65,18 @@ _VENDOR_DIRS = ("vendor/", "third_party/", "thirdparty/", "node_modules/",
 _GENERATED_HINTS = ("_pb2.py", ".pb.go", "_generated.", ".gen.", "generated/",
                     ".g.dart", "_pb.js")
 
+# Directory names that mark everything under them as test code, used by
+# is_test_path below.
+_TEST_DIR_NAMES = {"tests", "test", "spec", "specs", "__tests__"}
+
+# A camelCase "Test" word boundary (lowercase/digit/underscore immediately
+# followed by capital T then lowercase "est"), the Android/JVM convention
+# for both directories ("androidTest/") and class-per-file names
+# ("FooTest.kt"). Case-sensitive on purpose: "contest" and "latest" end in
+# the same four letters but never capitalize the T, so this pattern leaves
+# them alone (see is_test_path's docstring).
+_CAMEL_TEST_SUFFIX = re.compile(r"[a-z0-9_]Test$")
+
 # Quote characters unified by every formatter that rewrites tokens rather
 # than whitespace, which is the class `git blame -w` cannot see through
 # and this project exists for.
@@ -87,6 +100,63 @@ def _all_paths_match(paths, needles):
     if not paths:
         return False
     return all(any(n in p for n in needles) for p in paths)
+
+
+def is_test_path(path):
+    """Identify test files by filename/directory convention, not substring match.
+
+    Recognises:
+      - any directory segment named tests/test/spec/specs/__tests__
+      - filename stems starting with "test_" or ending with "_test"/"_spec"
+      - a ".test." or ".spec." segment before the final extension
+        (e.g. "foo.test.js", "foo.spec.ts")
+      - a directory or filename stem ending in a camelCase "Test" suffix
+        immediately after a lowercase letter, digit or underscore (e.g.
+        "androidTest/", "FooTest.kt"), the Android/JVM convention where the
+        word boundary is a capital letter rather than a separator
+
+    Deliberately does NOT match a bare "test"/"spec" substring anywhere in the
+    path, which would misclassify files like "latest.py", "contest.py",
+    "inspector.py", "specification.md" or "respect.go" as tests: the
+    camelCase check above is case-sensitive specifically so "contest" (no
+    capital T) stays out while "FooTest" (a lowercase letter immediately
+    followed by capital T) is recognised.
+
+    This lives here, in the one module with no git and no filesystem access,
+    rather than in artifacts.py (where it originated) or trace.py, because
+    both now need the identical judgement on the identical kind of value: a
+    bare path string, nothing else. artifacts.py uses it to find the test
+    that guards a candidate; trace.py uses it to decide which of a commit's
+    co-changed paths are worth keeping when there are more than the cap
+    allows. A path is a path regardless of which caller is asking, so one
+    classifier here is what keeps both callers' answers from drifting apart,
+    the same reason _VENDOR_DIRS and _GENERATED_HINTS live here instead of
+    being duplicated at each call site.
+    """
+    if not path:
+        return False
+
+    dirname, filename = posixpath.split(path)
+    dir_parts = [p for p in dirname.split("/") if p]
+    for part in dir_parts:
+        if part.lower() in _TEST_DIR_NAMES or _CAMEL_TEST_SUFFIX.search(part):
+            return True
+
+    raw_stem = filename.split(".")[0]
+    lowered_segments = filename.lower().split(".")
+    lowered_stem = lowered_segments[0]
+    middle = lowered_segments[1:-1]  # segments between the stem and the final extension
+    if "test" in middle or "spec" in middle:
+        return True
+
+    if (lowered_stem.startswith("test_") or lowered_stem.endswith("_test")
+            or lowered_stem.endswith("_spec")):
+        return True
+
+    if _CAMEL_TEST_SUFFIX.search(raw_stem):
+        return True
+
+    return False
 
 
 def normalize_code_line(line):

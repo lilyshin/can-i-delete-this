@@ -21,11 +21,11 @@ language's marker by hand.
 
 import argparse
 import json
-import posixpath
 import shutil
 import subprocess
 
 import citation
+import noise
 import scanner
 
 CLIPBOARD_TOOLS = (
@@ -35,9 +35,6 @@ CLIPBOARD_TOOLS = (
     ("xsel", ["xsel", "--clipboard", "--input"]),
     ("clip", ["clip"]),
 )
-
-# Directory names that mark everything under them as test code.
-_TEST_DIR_NAMES = {"tests", "test", "spec", "specs", "__tests__"}
 
 # Every piece of text this module writes around the data it renders, keyed
 # by language then by a dotted string key. This is a plain data lookup, not
@@ -346,39 +343,6 @@ def _not_introduction_text(grade, target, refs, *, lang="en"):
     ])
 
 
-def _is_test_path(path):
-    """Identify test files by filename/directory convention, not substring match.
-
-    Recognises:
-      - any directory segment named tests/test/spec/specs/__tests__
-      - filename stems starting with "test_" or ending with "_test"/"_spec"
-      - a ".test." or ".spec." segment before the final extension
-        (e.g. "foo.test.js", "foo.spec.ts")
-
-    Deliberately does NOT match a bare "test"/"spec" substring anywhere in the
-    path, which would misclassify files like "latest.py", "contest.py",
-    "inspector.py", "specification.md" or "respect.go" as tests.
-    """
-    if not path:
-        return False
-
-    dirname, filename = posixpath.split(path)
-    dir_parts = [p for p in dirname.split("/") if p]
-    if any(part.lower() in _TEST_DIR_NAMES for part in dir_parts):
-        return True
-
-    segments = filename.lower().split(".")
-    stem = segments[0]
-    middle = segments[1:-1]  # segments between the stem and the final extension
-    if "test" in middle or "spec" in middle:
-        return True
-
-    if stem.startswith("test_") or stem.endswith("_test") or stem.endswith("_spec"):
-        return True
-
-    return False
-
-
 def _tests(trace_data, real_sha=None):
     """Co-changed test paths, restricted to the commit the artifact is about.
 
@@ -390,7 +354,7 @@ def _tests(trace_data, real_sha=None):
     nothing is attributed to anything, so no entries match.
     """
     return [c["path"] for c in trace_data.get("co_changed", [])
-            if _is_test_path(c["path"]) and real_sha is not None
+            if noise.is_test_path(c["path"]) and real_sha is not None
             and c.get("sha") == real_sha]
 
 
