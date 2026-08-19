@@ -16,11 +16,20 @@ Two things follow from `git apply` patching the *working tree*:
   a filesystem read, not a git query, so it does not go through `gitq`;
   this module makes no git calls at all.)
 - The trace's own snippet was read from HEAD, so it is the record of what
-  the investigation saw. When the file on disk no longer matches it at
-  the recorded line numbers, the target has moved and the line numbers
-  may now point at something else entirely. That is a refusal, not a
-  best guess: a KEEP comment nailed above the wrong code is the same
-  misattribution the rest of this project exists to prevent.
+  the investigation saw: the target's lines *and* the lines around them.
+  Every recorded line is compared against the working tree at its own
+  line number, and one disagreement anywhere in that window is a
+  refusal. Comparing only the target's own text would establish almost
+  nothing, because a one-line target is often `return`, `}`, `end` or
+  `pass`, and text like that sits at a great many line numbers: a
+  reordered file can hand back a match at the recorded numbers while the
+  code the verdict is about has moved elsewhere. What the window match
+  establishes is narrow and is all the trace's record can support: the
+  neighbourhood the investigation read is still at these line numbers.
+  It says nothing about the rest of the file, and it is not proof. A
+  KEEP comment nailed above the wrong code is the same misattribution
+  the rest of this project exists to prevent, so anything short of that
+  match refuses rather than guesses.
 
 Every other doubt is a refusal too, for the same reason -- a wrong patch
 is worse than no patch. See `Refused` for the full list of codes.
@@ -29,8 +38,11 @@ The refusal reasons are chrome this module writes, so they are looked up
 in `_STRINGS` by `lang`, the same per-module pattern `artifacts.py` and
 `render.py` use. Paths, line numbers and grades inside those sentences
 are data, never translated. The comment text itself is not written here
-at all: it comes from `artifacts.skeleton`, which already carries the
-target file's own comment marker.
+at all: it is the verdict's own `artifact.content` when the verdict
+carries one, and `artifacts.skeleton` otherwise, which is the precedence
+`artifacts.py`'s CLI uses. The patch therefore inserts the same text the
+report shows and the user was offered to paste, and never a second,
+quietly different version of it.
 """
 
 import argparse
@@ -81,18 +93,22 @@ _STRINGS = {
         "out-of-range": "{path} has {total} lines on disk, but the trace's "
             "target is lines {start}-{end}. The file changed after the "
             "trace; re-run the trace.",
-        "target-moved": "Lines {start}-{end} of {path} on disk no longer "
-            "match what the trace recorded there, so the file moved on "
-            "since the investigation and those line numbers may point "
+        "target-moved": "{path} on disk no longer matches what the trace "
+            "recorded around lines {start}-{end} (the target's lines, or "
+            "the lines the trace recorded next to them), so the file moved "
+            "on since the investigation and those line numbers may point "
             "somewhere else now. Re-run the trace.",
         "out-is-target": "--out points at {path}, which is the file this "
             "patch is for. This tool never writes to the target file; write "
             "the patch somewhere else and apply it yourself.",
-        "not-a-comment": "The artifact for this verdict is not a plain keep "
-            "comment (its citation resolves to no commit in this trace, or "
-            "to no commit tagged as the introduction), so it cannot be "
-            "inserted into source. Run artifacts.py to read what it says "
-            "and act on that instead.",
+        "not-a-comment": "The keep comment for this verdict is not a "
+            "comment: at least one of its lines does not start with "
+            "{marker}. Either the verdict's own artifact content is not "
+            "comment lines in this file's syntax, or (when it carries none) "
+            "its citation resolves to no commit in this trace or to no "
+            "commit tagged as the introduction. It cannot be inserted into "
+            "source. Run artifacts.py to read what it says and act on that "
+            "instead.",
     },
     "ko": {
         "not-danger": "검증(verdict)의 등급이 danger가 아니라 {grade}입니다. KEEP "
@@ -119,15 +135,16 @@ _STRINGS = {
         "out-of-range": "디스크의 {path}는 {total}줄인데 trace의 대상은 "
             "{start}-{end}줄입니다. trace 이후 파일이 바뀌었으니 trace를 다시 "
             "실행하세요.",
-        "target-moved": "디스크의 {path} {start}-{end}줄이 trace가 기록한 내용과 "
-            "다릅니다. 조사 시점 이후로 파일이 바뀌어 그 줄 번호가 다른 곳을 "
-            "가리킬 수 있습니다. trace를 다시 실행하세요.",
+        "target-moved": "디스크의 {path}가 trace가 {start}-{end}줄과 그 주변으로 "
+            "기록한 내용과 다릅니다. 조사 시점 이후로 파일이 바뀌어 그 줄 번호가 "
+            "다른 곳을 가리킬 수 있습니다. trace를 다시 실행하세요.",
         "out-is-target": "--out이 이 패치의 대상 파일인 {path}를 가리킵니다. 이 도구는 "
             "대상 파일에 쓰지 않습니다. 패치는 다른 곳에 쓰고 적용은 직접 하세요.",
-        "not-a-comment": "이 검증(verdict)의 결과물은 순수한 KEEP 주석이 아닙니다"
-            "(인용한 커밋이 이 trace에 없거나, 도입 커밋으로 표시된 것이 없습니다). "
-            "소스에 넣을 수 없으니 artifacts.py를 실행해 내용을 읽고 그에 따라 "
-            "처리하세요.",
+        "not-a-comment": "이 검증(verdict)의 KEEP 주석이 주석이 아닙니다. "
+            "{marker}로 시작하지 않는 줄이 있습니다. 검증의 artifact content가 이 "
+            "파일 문법의 주석 줄이 아니거나, content가 없는 경우라면 인용한 커밋이 "
+            "이 trace에 없거나 도입 커밋으로 표시된 것이 없습니다. 소스에 넣을 수 "
+            "없으니 artifacts.py를 실행해 내용을 읽고 그에 따라 처리하세요.",
     },
 }
 
@@ -165,10 +182,13 @@ class Refused(Exception):
     - out-is-target: the CLI's `--out` names the target file itself.
     - out-of-range: the target line numbers fall outside the file.
     - target-moved: the file on disk differs from what the trace recorded
-      at those line numbers.
-    - not-a-comment: the artifact for this verdict is not a comment block
-      (an unresolved or non-introduction citation), so it cannot go into
-      source code.
+      anywhere in the snippet's window (the target's lines or the context
+      the trace recorded around them).
+    - not-a-comment: the keep-comment text is not comment lines in the
+      target file's own syntax, so it cannot go into source code. Either
+      the verdict's `artifact.content` is not (prose, another language's
+      marker), or the verdict carries none and the skeleton came back as a
+      warning paragraph about an unresolved or non-introduction citation.
     """
 
     def __init__(self, code, message):
@@ -226,28 +246,6 @@ def _read_working_tree(repo, path, lang):
     return lines, ends_with_newline
 
 
-def _recorded_target_lines(snippet, start, end, lang):
-    """What the trace recorded on lines `start`..`end`.
-
-    `snippet.lines` spans `snippet.start_line`..`snippet.end_line`, target
-    lines and surrounding context together (see `trace._compute_snippet`),
-    so the target's own lines are the slice at the offset of `start`
-    within that span.
-    """
-    span_start = _int_or_none(snippet.get("start_line"))
-    recorded = snippet.get("lines")
-    if span_start is None or not isinstance(recorded, list):
-        raise _refuse(lang, "malformed-trace")
-    lo = start - span_start
-    hi = end - span_start + 1
-    if lo < 0 or hi > len(recorded):
-        raise _refuse(lang, "malformed-trace")
-    slice_ = recorded[lo:hi]
-    if not slice_ or not all(isinstance(line, str) for line in slice_):
-        raise _refuse(lang, "malformed-trace")
-    return slice_
-
-
 def _same_line(disk, recorded):
     """Whether a line on disk is the line the trace recorded.
 
@@ -260,23 +258,102 @@ def _same_line(disk, recorded):
     return disk.rstrip("\r") == recorded.rstrip("\r")
 
 
+def _recorded_span(snippet, start, end, lang):
+    """Every line the trace recorded, and the number of the first of them.
+
+    `snippet.lines` spans `snippet.start_line`..`snippet.end_line`, target
+    lines and surrounding context together (see `trace._compute_snippet`),
+    and all of it is the record of what the investigation read. A trace
+    whose target span is not inside its own snippet contradicts itself and
+    is malformed, not a puzzle to solve.
+    """
+    span_start = _int_or_none(snippet.get("start_line"))
+    recorded = snippet.get("lines")
+    if span_start is None or span_start < 1 or not isinstance(recorded, list):
+        raise _refuse(lang, "malformed-trace")
+    if not recorded or not all(isinstance(line, str) for line in recorded):
+        raise _refuse(lang, "malformed-trace")
+    if start - span_start < 0 or end - span_start + 1 > len(recorded):
+        raise _refuse(lang, "malformed-trace")
+    return span_start, recorded
+
+
+def _check_unmoved(snippet, lines, start, end, path, lang):
+    """Refuse unless the whole recorded window is still where it was.
+
+    The target's own lines are not enough to check, and checking only them
+    is not a smaller version of this check but a different and much weaker
+    one: a one-line target whose text is `return`, `}`, `end` or `pass`
+    matches at line numbers all over the file, so an ordinary reorder (two
+    functions swapped) can leave unrelated code sitting at the recorded
+    numbers, matching line for line. The trace already recorded the
+    context on both sides for the report, so comparing it costs no extra
+    read and turns that coincidence back into the refusal it should be.
+
+    A recorded line past the end of the file on disk is a disagreement
+    like any other: the file lost lines after the trace read it.
+    """
+    span_start, recorded = _recorded_span(snippet, start, end, lang)
+    for offset, line in enumerate(recorded):
+        lineno = span_start + offset
+        if lineno > len(lines) or not _same_line(lines[lineno - 1], line):
+            raise _refuse(lang, "target-moved", path=path, start=start, end=end)
+
+
+def _artifact_content(verdict_data):
+    """The verdict's own keep-comment text, or None if it carries none.
+
+    `verdict.validate` requires `artifact.content` to be a non-empty
+    string, so a verdict that reached this module normally has one: it is
+    what the agent wrote, and it is what `render.py` and `artifacts.py`
+    show the user. Checked with isinstance rather than coerced, so a
+    malformed `artifact` (a list, a null, a number) falls back instead of
+    printing its repr into somebody's source file.
+    """
+    artifact = verdict_data.get("artifact")
+    if not isinstance(artifact, dict):
+        return None
+    content = artifact.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return None
+    return content
+
+
 def _comment_lines(trace_data, verdict_data, marker, indent, lang):
     """The keep comment, indented to match the target line.
 
-    The text comes from `artifacts.skeleton`, which already prefixes each
-    line with the target file's own comment marker. It is checked, not
-    trusted: an unresolved or non-introduction citation makes `skeleton`
-    return a warning paragraph instead of a comment (see its `_top`), and
-    that paragraph in a source file is a syntax error. Rather than
-    reformat it into something insertable -- which would mean deciding
-    what an unverified attribution should say, the exact guess this
-    project refuses to make -- this refuses.
+    The text is the verdict's own `artifact.content` when there is one and
+    `artifacts.skeleton` otherwise, the same precedence `artifacts.py`'s
+    CLI applies. That is what makes the patch and the report carry one
+    comment rather than two: the agent's content holds the reasoning, the
+    incident link and the reason not to delete, and rebuilding the
+    skeleton here would drop all of it on the floor without telling
+    anyone.
+
+    Either text is checked, not trusted: every line has to start with the
+    target file's own comment marker. An unresolved or non-introduction
+    citation makes `skeleton` return a warning paragraph instead of a
+    comment (see its `_top`), and an agent can write prose into
+    `artifact.content` just as easily; either one in a source file is a
+    syntax error. Rather than reformat it into something insertable --
+    which for the skeleton would mean deciding what an unverified
+    attribution should say, the exact guess this project refuses to make,
+    and for agent content would mean rewriting text a person approved --
+    this refuses. A refusal is one step from recovered (`artifacts.py`
+    prints the text to paste by hand); a file that no longer compiles is
+    not.
     """
-    text = artifacts.skeleton("danger", trace_data,
-                              verdict_data.get("evidence"), lang=lang)
-    lines = text.split("\n")
+    text = _artifact_content(verdict_data)
+    if text is None:
+        text = artifacts.skeleton("danger", trace_data,
+                                  verdict_data.get("evidence"), lang=lang)
+    # A trailing newline is a line terminator, not a line, and an agent
+    # writing JSON has no way to know this module splits on it. Dropping
+    # it here is not a loosening of the marker check below: it removes
+    # nothing a reader would call content.
+    lines = text.rstrip("\n").split("\n")
     if not lines or not all(line.startswith(marker) for line in lines):
-        raise _refuse(lang, "not-a-comment")
+        raise _refuse(lang, "not-a-comment", marker=marker)
     return [indent + line for line in lines]
 
 
@@ -382,11 +459,7 @@ def build(trace_data, verdict_data, *, repo, lang="en"):
         raise _refuse(lang, "out-of-range", path=path, total=len(lines),
                       start=start, end=end)
 
-    recorded = _recorded_target_lines(snippet, start, end, lang)
-    on_disk = lines[start - 1:end]
-    if len(recorded) != len(on_disk) or not all(
-            _same_line(d, r) for d, r in zip(on_disk, recorded)):
-        raise _refuse(lang, "target-moved", path=path, start=start, end=end)
+    _check_unmoved(snippet, lines, start, end, path, lang)
 
     indent = _leading_whitespace(lines[start - 1])
     comment_lines = _comment_lines(trace_data, verdict_data, marker, indent, lang)
@@ -438,9 +511,12 @@ def main():
                          "is written when the patch is refused, and this may "
                          "not be the target file itself.")
     ap.add_argument("--lang", default="en",
-                    help="language for this tool's own wording and the keep "
-                         "comment's (en, ko; unknown values fall back to en). "
-                         "Paths, line numbers and shas are never translated.")
+                    help="language for this tool's own wording, and for the "
+                         "keep comment when the verdict carries no artifact "
+                         "content of its own (en, ko; unknown values fall "
+                         "back to en). The verdict's own content is inserted "
+                         "as written, and paths, line numbers and shas are "
+                         "never translated.")
     args = ap.parse_args()
 
     with open(args.trace, encoding="utf-8") as fh:

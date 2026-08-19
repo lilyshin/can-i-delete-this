@@ -25,17 +25,57 @@ import artifacts
 import make_fixture_repo
 import patch
 import trace as tracer
+import verdict as verdict_schema
 
 SCRIPTS = Path(__file__).parent.parent / "skills" / "can-i-delete-this" / "scripts"
 
+# The keep comment an agent would have written into the verdict: the same
+# two lines the skeleton has, so a test that only cares about shape reads
+# the same as it did, plus the incident reference an agent adds and a
+# skeleton cannot know.
+_KEEP_TEXT = (
+    "KEEP: hotfix: prevent double charge (#4127), incident INC-4127.",
+    "The retry path replays this branch; deleting it re-opens the incident.",
+)
 
-def _verdict(sha, *, grade="danger"):
+
+def _verdict(sha, *, grade="danger", content=None, marker="#"):
+    """A verdict `verdict.validate()` accepts, artifact and all.
+
+    The artifact block is not decoration here: `validate` requires
+    `artifact.content` to be a non-empty string, and `patch.py` inserts
+    that content when it is there, so a helper without one would test a
+    shape the schema rejects and would miss which text the patch carries.
+
+    `content` defaults to a keep comment in `marker`'s syntax, so a target
+    whose comment marker is not `#` has to say so (`marker="//"`) exactly
+    as a real agent would have to. Pass `content` to insert something
+    else, including something that is not a comment at all.
+    """
+    if content is None:
+        content = "\n".join(marker + " " + line for line in _KEEP_TEXT)
     return {
         "grade": grade,
         "summary": "This guard prevents a double charge.",
         "evidence": [{"type": "commit", "ref": sha, "role": "introduced"}],
         "conditions": ["the duplicate guard is removed upstream"],
+        "artifact": {"kind": verdict_schema.ARTIFACT_KINDS[grade],
+                     "content": content},
     }
+
+
+def _verdict_without_artifact(sha, *, grade="danger"):
+    """A verdict carrying no artifact block at all.
+
+    `verdict.validate()` rejects this, but `patch.py` tolerates it by
+    falling back to `artifacts.skeleton`, the same precedence
+    `artifacts.py`'s CLI applies. The tests below that are about the
+    skeleton itself, rather than about the text the agent approved, use
+    this so the fallback is what they exercise.
+    """
+    data = _verdict(sha, grade=grade)
+    del data["artifact"]
+    return data
 
 
 def _apply(repo, diff):
@@ -77,22 +117,13 @@ class _FixtureCase(unittest.TestCase):
         t = self.target(key)
         return tracer.trace(self.repo, t["path"], t["start"], t["end"])
 
-
-class TestPatchApplies(_FixtureCase):
-    """`git apply` accepts the patch, and the comment lands where it was
-    supposed to: directly above the target line, at the target line's own
-    indentation, with nothing else in the file touched.
-
-    The keep comment is more than one line (a KEEP line plus a guard or a
-    warning line), so "directly above" means the whole block sits between
-    the line before the target and the target itself.
-    """
-
-    def _apply_above_target(self, key, marker, lang="en"):
+    def _apply_above_target(self, key, marker, lang="en", verdict_data=None):
         t = self.target(key)
         before = _read(self.repo, t["path"]).split("\n")
 
-        diff = patch.build(self.trace_for(key), _verdict(self.info["sha"]),
+        if verdict_data is None:
+            verdict_data = _verdict(self.info["sha"], marker=marker)
+        diff = patch.build(self.trace_for(key), verdict_data,
                            repo=self.repo, lang=lang)
         result = _apply(self.repo, diff)
         self.assertEqual(result.returncode, 0,
@@ -113,6 +144,17 @@ class TestPatchApplies(_FixtureCase):
             self.assertTrue(line.startswith(t["indent"] + marker + " "),
                             "not an indented comment: " + repr(line))
         return t, block, after
+
+
+class TestPatchApplies(_FixtureCase):
+    """`git apply` accepts the patch, and the comment lands where it was
+    supposed to: directly above the target line, at the target line's own
+    indentation, with nothing else in the file touched.
+
+    The keep comment is more than one line (a KEEP line plus a guard or a
+    warning line), so "directly above" means the whole block sits between
+    the line before the target and the target itself.
+    """
 
     def test_python_patch_applies_and_lands_above_the_target(self):
         t, block, after = self._apply_above_target("python", "#")
@@ -151,7 +193,12 @@ class TestPatchApplies(_FixtureCase):
                          "        return {'status': 'duplicate'}")
 
     def test_korean_artifact_applies(self):
-        t, block, after = self._apply_above_target("python", "#", lang="ko")
+        """`--lang ko` reaches the comment text itself, which it can only do
+        through the skeleton: a verdict's own content is inserted in the
+        language the agent wrote it in, so this uses the fallback."""
+        t, block, after = self._apply_above_target(
+            "python", "#", lang="ko",
+            verdict_data=_verdict_without_artifact(self.info["sha"]))
         self.assertIn("유지:", block[0])
         self.assertEqual(after[t["start"] - 1 + len(block)],
                          "        return {'status': 'duplicate'}")
@@ -180,14 +227,58 @@ class TestPatchApplies(_FixtureCase):
         self.assertEqual(after[t["start"] + 2 + len(block)],
                          "        return {'status': 'duplicate'}")
 
-    def test_the_whole_comment_block_is_inserted_not_just_its_first_line(self):
+    def test_the_whole_skeleton_block_is_inserted_not_just_its_first_line(self):
+        """The fallback path: with no artifact content to insert, every line
+        of the skeleton goes in, not only the KEEP line."""
         info = self.trace_for("python")
-        expected = artifacts.skeleton("danger", info,
-                                      _verdict(self.info["sha"])["evidence"])
-        t, block, _after = self._apply_above_target("python", "#")
+        no_artifact = _verdict_without_artifact(self.info["sha"])
+        expected = artifacts.skeleton("danger", info, no_artifact["evidence"])
+        t, block, _after = self._apply_above_target("python", "#",
+                                                   verdict_data=no_artifact)
         self.assertEqual(len(block), len(expected.split("\n")))
         self.assertEqual([line.strip() for line in block],
                          [line.strip() for line in expected.split("\n")])
+
+
+class TestPatchCarriesTheVerdictsOwnComment(_FixtureCase):
+    """The text in the patch is the text the user was shown.
+
+    A `danger` verdict's `artifact.content` is what the agent wrote and what
+    `render.py` and `artifacts.py` display: the reasoning, the incident
+    link, the reason not to delete. Rebuilding the skeleton here instead
+    would put a second, quietly different comment into the file, and the
+    documentation's claim that the patch carries the same comment would be
+    false.
+    """
+
+    def test_the_helper_verdict_is_one_the_schema_accepts(self):
+        """The shape these tests run against, checked against verdict.py
+        itself: a helper the validator would reject cannot say anything
+        about what happens to a real verdict."""
+        verdict_schema.validate(_verdict(self.info["sha"]))
+        for grade in ("conditional", "safe", "unknown"):
+            verdict_schema.validate(_verdict(self.info["sha"], grade=grade))
+
+    def test_patch_inserts_the_verdicts_content_not_the_skeleton(self):
+        content = ("# KEEP: incident INC-4127, double charge on payment retry.\n"
+                   "# The retry path replays this branch. Ask #billing first.")
+        t, block, _after = self._apply_above_target(
+            "python", "#",
+            verdict_data=_verdict(self.info["sha"], content=content))
+        self.assertEqual([line.strip() for line in block],
+                         [line.strip() for line in content.split("\n")])
+        skeleton = artifacts.skeleton("danger", self.trace_for("python"),
+                                      _verdict(self.info["sha"])["evidence"])
+        self.assertNotIn(skeleton.split("\n")[0], "\n".join(block))
+
+    def test_content_with_a_trailing_newline_still_applies(self):
+        """A trailing newline in the JSON string is a line terminator, not a
+        blank line the marker check should refuse."""
+        content = "# KEEP: incident INC-4127, double charge on retry.\n"
+        t, block, _after = self._apply_above_target(
+            "python", "#",
+            verdict_data=_verdict(self.info["sha"], content=content))
+        self.assertEqual(len(block), 1)
 
 
 class TestPatchNeverWritesTheTargetFile(_FixtureCase):
@@ -229,9 +320,11 @@ class TestPatchShape(_FixtureCase):
         info = self.trace_for("python")
         # A co-changed test on the cited commit makes skeleton() emit the
         # guard line as well as the KEEP line, so the patch has more than
-        # one added line to check.
+        # one added line to check. The verdict carries no content of its
+        # own, so the skeleton is what lands in the patch.
         info["co_changed"] = [{"path": "tests/test_fee.py", "sha": self.info["sha"]}]
-        diff = patch.build(info, _verdict(self.info["sha"]), repo=self.repo)
+        diff = patch.build(info, _verdict_without_artifact(self.info["sha"]),
+                           repo=self.repo)
         added = [l[1:] for l in diff.splitlines() if l.startswith("+")
                  and not l.startswith("+++")]
         self.assertGreater(len(added), 1)
@@ -239,11 +332,45 @@ class TestPatchShape(_FixtureCase):
             self.assertTrue(line.startswith("        # "),
                             "added line is not an indented comment: " + repr(line))
 
-    def test_context_lines_come_from_the_working_tree(self):
+    def test_context_lines_are_the_lines_around_the_target(self):
         diff = self._diff("python")
         context = [l[1:] for l in diff.splitlines()[4:] if l.startswith(" ")]
         self.assertIn("    if order.already_charged:", context)
         self.assertIn("    order.mark_processed()", context)
+
+    def test_context_lines_come_from_the_working_tree_not_from_the_trace(self):
+        """The claim patch.py exists for (see its module docstring): the
+        context is read from the file on disk, because that is what
+        `git apply` matches against, and a patch built from what the trace
+        recorded is rejected the moment the working tree has an uncommitted
+        edit.
+
+        The two can only be told apart where they disagree, and the strict
+        recorded-window check refuses every disagreement inside the window.
+        So the edit goes just past the end of the window: `edge.py`'s target
+        sits two lines from the end of the file, its recorded snippet is
+        clamped there, and the patch's three lines of trailing context reach
+        one line further. An uncommitted line appended on disk therefore has
+        to appear in the hunk, and nothing in the trace could have supplied
+        it.
+        """
+        t = self.target("edge")
+        full = os.path.join(self.repo, t["path"])
+        uncommitted = "    # uncommitted while investigating"
+        with open(full, "a", encoding="utf-8") as fh:
+            fh.write(uncommitted + "\n")
+
+        info = self.trace_for("edge")
+        self.assertNotIn(uncommitted, info["snippet"]["lines"],
+                         "the fixture's snippet already knows the edit, so "
+                         "this test cannot tell disk from trace")
+
+        diff = patch.build(info, _verdict(self.info["sha"]), repo=self.repo)
+        context = [l[1:] for l in diff.splitlines()[4:] if l.startswith(" ")]
+        self.assertIn(uncommitted, context)
+        result = _apply(self.repo, diff)
+        self.assertEqual(result.returncode, 0,
+                         "git apply rejected the patch: " + result.stderr)
 
     def test_no_newline_at_end_of_file_is_declared(self):
         diff = self._diff("tail")
@@ -370,6 +497,96 @@ class TestRefusals(_FixtureCase):
         self.assertIn("diff --git a/block.py",
                       patch.build(info, _verdict(self.info["sha"]), repo=self.repo))
 
+    # The reordered file: two methods of the same shape swapped, which is
+    # an ordinary refactor, and after it line 6 is another method's bare
+    # `return`. The recorded target text matches there line for line, so a
+    # check that compared only the target's own lines builds a patch and
+    # `git apply` takes it: the KEEP comment lands above code nobody
+    # traced, which is the misattribution this whole project refuses.
+    _REORDERED_KOTLIN = (
+        "package billing\n"
+        "\n"
+        "class Ledger {\n"
+        "    fun refund(order: Order) {\n"
+        "        if (order.refunded) {\n"
+        "            return\n"
+        "        }\n"
+        "        order.markRefunded()\n"
+        "    }\n"
+        "\n"
+        "    fun charge(order: Order) {\n"
+        "        if (order.alreadyCharged) {\n"
+        "            return\n"
+        "        }\n"
+        "        order.markProcessed()\n"
+        "    }\n"
+        "}\n"
+    )
+
+    def test_reordered_file_matching_the_target_text_is_refused(self):
+        info = self.trace_for("reorder")
+        t = self.target("reorder")
+        on_disk = self._REORDERED_KOTLIN.split("\n")
+        self.assertEqual(on_disk[t["start"] - 1],
+                         info["snippet"]["lines"][t["start"]
+                                                 - info["snippet"]["start_line"]],
+                         "the reordered file must still match the target's own "
+                         "line, or this test refuses for the wrong reason")
+
+        with open(os.path.join(self.repo, t["path"]), "w",
+                  encoding="utf-8") as fh:
+            fh.write(self._REORDERED_KOTLIN)
+
+        refused = self._refuse(info, _verdict(self.info["sha"], marker="//"))
+        self.assertEqual(refused.code, "target-moved")
+
+    def test_unreordered_file_still_produces_a_patch(self):
+        """The other half of the pair: the same fixture, untouched, has to
+        produce a patch. A check that refused this would be refusing
+        everything rather than catching the reorder."""
+        info = self.trace_for("reorder")
+        diff = patch.build(info, _verdict(self.info["sha"], marker="//"),
+                           repo=self.repo)
+        self.assertIn("diff --git a/Ledger.kt", diff)
+        result = _apply(self.repo, diff)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_edit_to_a_context_line_outside_the_target_is_refused(self):
+        """The narrow version of the reorder: one line the trace recorded
+        next to the target, changed on disk, with the target itself
+        untouched. The recorded window is evidence about where the target
+        is, so a disagreement anywhere in it is a refusal."""
+        info = self.trace_for("python")
+        self._edit_line("python", 5, "    if order.charged_already:")
+        refused = self._refuse(info, _verdict(self.info["sha"]))
+        self.assertEqual(refused.code, "target-moved")
+
+    def test_edit_below_the_target_inside_the_window_is_refused(self):
+        info = self.trace_for("python")
+        self._edit_line("python", 8, "    return order.total_amount")
+        refused = self._refuse(info, _verdict(self.info["sha"]))
+        self.assertEqual(refused.code, "target-moved")
+
+    def test_content_that_is_not_a_comment_is_refused(self):
+        """An agent can write prose into `artifact.content` as easily as a
+        comment, and prose in a source file is a syntax error. The patch is
+        refused rather than reformatted: artifacts.py still prints the text,
+        so the refusal costs one step, while a file that no longer compiles
+        costs a great deal more."""
+        info = self.trace_for("python")
+        refused = self._refuse(info, _verdict(
+            self.info["sha"],
+            content="This guard prevents a double charge. See INC-4127."))
+        self.assertEqual(refused.code, "not-a-comment")
+
+    def test_content_whose_marker_is_another_languages_is_refused(self):
+        """A `//` comment above a Python line is not a comment, so the check
+        is per target file, not "does it look like a comment somewhere"."""
+        info = self.trace_for("python")
+        refused = self._refuse(info, _verdict(
+            self.info["sha"], content="// KEEP: incident INC-4127."))
+        self.assertEqual(refused.code, "not-a-comment")
+
     def test_undecodable_file_is_refused(self):
         info = self.trace_for("python")
         info["target"]["path"] = self.target("binary")["path"]
@@ -406,9 +623,11 @@ class TestRefusals(_FixtureCase):
         """skeleton() answers an unresolved citation with a warning
         paragraph, not a comment. Inserting that into source would be a
         syntax error, and inserting a guessed attribution instead would be
-        the misattribution this project exists to avoid."""
+        the misattribution this project exists to avoid. The verdict carries
+        no content of its own, so the skeleton is what gets checked."""
         info = self.trace_for("python")
-        refused = self._refuse(info, _verdict("deadbee" + "0" * 33))
+        refused = self._refuse(
+            info, _verdict_without_artifact("deadbee" + "0" * 33))
         self.assertEqual(refused.code, "not-a-comment")
 
     def test_malformed_trace_is_refused(self):

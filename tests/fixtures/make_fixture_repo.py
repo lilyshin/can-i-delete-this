@@ -1297,6 +1297,16 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
     holding a NUL byte) and `docs/fee.rst` (an extension no marker is
     known for) exist to be refused.
 
+    `Ledger.kt` holds two methods of identical shape whose guard line is
+    the bare `return` this project's Kotlin target already is, so a test
+    can swap them (an ordinary refactor) and leave a line that matches the
+    recorded target sitting at the recorded line number with somebody
+    else's code around it. `edge.py`'s target is close enough to the end of
+    the file that the patch's three lines of trailing context reach past
+    it, which is how a test can put an uncommitted line inside the context
+    of a patch and see whether the context was read from the working tree
+    at all.
+
     Every returned line number is 1-based and points at the first line of
     the target, the line the comment goes directly above.
     """
@@ -1331,6 +1341,45 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
         "        order.markProcessed()\n"                # 8
         "    }\n"                                        # 9
         "}\n"                                            # 10
+    )
+
+    # Two methods with the same shape, so swapping them is a refactor a
+    # reviewer would wave through, and the guard line of each is the same
+    # bare `return`. After the swap, line 6 is still `            return`
+    # and belongs to the other method entirely.
+    reorder = repo / "Ledger.kt"
+    reorder.write_text(
+        "package billing\n"                              # 1
+        "\n"                                             # 2
+        "class Ledger {\n"                               # 3
+        "    fun charge(order: Order) {\n"               # 4
+        "        if (order.alreadyCharged) {\n"          # 5
+        "            return\n"                           # 6  <- target
+        "        }\n"                                    # 7
+        "        order.markProcessed()\n"                # 8
+        "    }\n"                                        # 9
+        "\n"                                             # 10
+        "    fun refund(order: Order) {\n"               # 11
+        "        if (order.refunded) {\n"                # 12
+        "            return\n"                           # 13
+        "        }\n"                                    # 14
+        "        order.markRefunded()\n"                 # 15
+        "    }\n"                                        # 16
+        "}\n"                                            # 17
+    )
+
+    # The target sits two lines from the end, so the patch's three lines of
+    # trailing context run one line past the end of the file as HEAD has
+    # it. An uncommitted line appended on disk therefore lands inside the
+    # hunk's context, where a patch built from the trace's snippet instead
+    # of from the working tree cannot put it.
+    edge = repo / "edge.py"
+    edge.write_text(
+        "def boot():\n"                                  # 1
+        "    configure()\n"                              # 2
+        "    if legacy_mode:\n"                          # 3
+        "        return legacy_boot()\n"                 # 4  <- target
+        "    return boot_v2()\n"                         # 5
     )
 
     sql = repo / "migrations" / "0001_fee.sql"
@@ -1452,6 +1501,10 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
                     "indent": "        "},
         "kotlin": {"path": "Fee.kt", "start": 6, "end": 6,
                     "indent": "            "},
+        "reorder": {"path": "Ledger.kt", "start": 6, "end": 6,
+                     "indent": "            "},
+        "edge": {"path": "edge.py", "start": 4, "end": 4,
+                  "indent": "        "},
         "sql": {"path": "migrations/0001_fee.sql", "start": 4, "end": 4,
                  "indent": "    "},
         "block": {"path": "block.py", "start": 5, "end": 8,

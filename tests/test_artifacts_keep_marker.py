@@ -122,10 +122,19 @@ class TestKeepMarkerIsLanguageIndependent(unittest.TestCase):
         self.assertIn("-- 유지:", out)
 
     def test_en_and_ko_agree_on_marker_for_same_path(self):
+        """Every line of both languages starts with the same marker prefix.
+
+        Checked as a prefix, not as "a # appears somewhere in the line": the
+        fixture subject is `hotfix: prevent double charge (#4127)`, so a
+        substring check finds a # whether the marker is there or not, and
+        passes against the hardcoded `// KEEP:` this file exists to keep
+        out.
+        """
         en = artifacts.skeleton("danger", _trace("billing/fee.py"), lang="en")
         ko = artifacts.skeleton("danger", _trace("billing/fee.py"), lang="ko")
-        self.assertIn("#", en.splitlines()[0])
-        self.assertIn("#", ko.splitlines()[0])
+        for line in en.splitlines() + ko.splitlines():
+            self.assertTrue(line.startswith("# "),
+                            "not prefixed with the target's marker: " + repr(line))
 
     def test_ko_rst_target_has_no_marker_and_explains(self):
         out = artifacts.skeleton("danger", _trace("docs/fee.rst"), lang="ko")
