@@ -176,10 +176,14 @@ history size.
 
    Hand the patch to the user; do not run `git apply` yourself. `patch.py`
    only writes the diff, to stdout or to `--out`; it never opens the target
-   file for writing and never applies the patch. It refuses instead of
-   guessing when the file on disk has moved since the trace or the target's
-   language has no known comment marker; see `patch.py` for the full list of
-   refusals.
+   file for writing and never applies the patch. It inserts the verdict's own
+   `artifact.content`, so the patch and the text above carry one comment, not
+   two. It refuses instead of guessing when the file on disk has moved since
+   the trace or the target's language has no known comment marker; see
+   `patch.py` for the full list of refusals. On a refusal, do not work around
+   it: hand over the plain-text keep-comment `artifacts.py` printed in this
+   same step and let the user paste it, and pass on the refusal's own
+   sentence, which says what would make a patch possible.
 
 ## Scanning instead of asking about one line
 

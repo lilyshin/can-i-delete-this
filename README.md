@@ -210,17 +210,19 @@ extra read; discarding the real introducing commit cannot be undone.
 ## Safety
 
 - **Read-only.** `gitq.py` allows sixteen read subcommands and nothing else.
-  There is no write path to a git object, a working-tree file, or the index
-  anywhere in this project.
+  No git object, no index entry, and no file of yours is written except the
+  patch file you name with `patch.py --out`.
 - **Sanitized environment, not just a flag denylist.** Every invocation
   forces `-c core.pager=cat` and `-c diff.external=` and overrides the
   pager, external-diff, editor and askpass variables, so a repo's own config
   cannot name a program to exec even through a flag this project has not
   thought of. `CONTRIBUTING.md` has the full reasoning, including the `-O`
   hole that prompted it.
-- **Never writes to your files.** No comment injected, no PR opened, no file
-  edited. Scripts print text; `--copy` puts it on your clipboard only
-  because you asked.
+- **Never writes a file it was not told to write.** No comment injected, no
+  PR opened, no file edited. Scripts print text; `--copy` puts it on your
+  clipboard because you asked, and `patch.py --out` writes the patch file
+  you named, never the file under investigation, and never by running
+  `git apply`.
 - **No network, no third-party dependency.** Standard library, Python 3.9+.
 
 ## License
@@ -280,8 +282,9 @@ squash가 실제 도입 커밋 위에 쌓이면 blame은 맨 위에 있는 것�
 텍스트만이 그것들을 갈랐습니다. 발췌는 저장소의 실제 코드라서 체크리스트를
 이슈에 붙이면 그 코드도 함께 갑니다. 그 사실을 체크리스트 자체가 밝힙니다.
 
-설치는 `/plugin marketplace add lilyshin/can-i-delete-this`. 사용자 파일에
-쓰지 않고, 네트워크를 쓰지 않고, 표준 라이브러리 외 의존성이 없습니다.
+설치는 `/plugin marketplace add lilyshin/can-i-delete-this`. `patch.py --out`으로
+직접 지정한 패치 파일 외에는 사용자 파일에 쓰지 않고, 네트워크를 쓰지 않고,
+표준 라이브러리 외 의존성이 없습니다.
 이슈·PR·커밋 메시지는 한국어로 쓰셔도 됩니다.
 
 </details>
