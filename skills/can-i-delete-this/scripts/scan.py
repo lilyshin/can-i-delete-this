@@ -53,10 +53,34 @@ def _skip_reason(path):
     return None
 
 
+def _normalize_offset(iso_date):
+    """Rewrite a trailing `Z` as `+00:00`, leaving everything else alone.
+
+    `git log --format=%aI` renders a UTC offset as `Z` and every other
+    offset numerically, so a repository whose commits were authored in UTC
+    (a CI machine, a server, plenty of developers) hands this module dates
+    `datetime.fromisoformat` refused until Python 3.11. This project
+    supports 3.9, where the refusal made every date unparseable: `age_days`
+    came back None and the oldest-first ordering degraded to file-listing
+    order without saying so.
+
+    Normalizing here rather than catching the failure later is deliberate.
+    The guarantee worth testing is that no `Z` ever reaches
+    `fromisoformat`, and that holds on every interpreter version, whereas a
+    test that only checks the parsed value passes for the wrong reason on
+    3.11 and proves nothing.
+    """
+    if not isinstance(iso_date, str):
+        return iso_date
+    if iso_date.endswith("Z") or iso_date.endswith("z"):
+        return iso_date[:-1] + "+00:00"
+    return iso_date
+
+
 def _parse_date(iso_date):
     """A commit's `%aI` date as an aware datetime, or None."""
     try:
-        when = datetime.fromisoformat(iso_date)
+        when = datetime.fromisoformat(_normalize_offset(iso_date))
     except (TypeError, ValueError):
         return None
     if when.tzinfo is None:
