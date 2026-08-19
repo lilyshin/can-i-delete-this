@@ -119,6 +119,11 @@ question addressed to a named author. There is no cache and no database on
 purpose: a stored verdict goes stale silently, while a comment travels with
 the line it describes and gets read in review.
 
+A `danger` keep-comment does not have to be pasted in by hand: `patch.py`
+turns the same comment into a unified diff you apply yourself with
+`git apply`. The tool only produces that diff; it does not touch the target
+file and does not run `git apply` on your behalf.
+
 <details>
 <summary>Reproduce the report at the top of this page</summary>
 
@@ -233,6 +238,9 @@ squash가 실제 도입 커밋 위에 쌓이면 blame은 맨 위에 있는 것�
 커밋을 찾아, 삭제 위험도를 커밋 근거와 함께 등급으로 매깁니다
 (`danger`/`conditional`/`safe`/`unknown`). 등급마다 바로 쓸 수 있는 결과물이
 따라옵니다(KEEP 코멘트, 삭제 전 확인 체크리스트, PR 본문, 물어볼 질문).
+`danger` 등급의 KEEP 코멘트는 손으로 붙여넣는 대신, `patch.py`로 만든 패치
+파일을 `git apply`로 적용할 수도 있습니다. 도구는 패치만 만들 뿐, 대상
+파일에 직접 쓰거나 `git apply`를 대신 실행하지는 않습니다.
 
 **쓰이는 순간 네 가지:** 코드를 지우는 PR을 리뷰할 때, dead code를 정리하다
 "지워도 될 것 같은데"에서 멈출 때, `git blame`이 `chore: apply formatter`를

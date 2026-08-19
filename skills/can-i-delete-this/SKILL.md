@@ -167,6 +167,20 @@ history size.
    python3 <skill>/scripts/artifacts.py --trace t.json --verdict v.json --copy --lang ko
    ```
 
+   For a `danger` verdict only, you may also offer the keep-comment as a
+   patch instead of text the user pastes by hand:
+
+   ```
+   python3 <skill>/scripts/patch.py --trace t.json --verdict v.json --lang ko
+   ```
+
+   Hand the patch to the user; do not run `git apply` yourself. `patch.py`
+   only writes the diff, to stdout or to `--out`; it never opens the target
+   file for writing and never applies the patch. It refuses instead of
+   guessing when the file on disk has moved since the trace or the target's
+   language has no known comment marker; see `patch.py` for the full list of
+   refusals.
+
 ## Scanning instead of asking about one line
 
 The workflow above starts from a target the user already suspects. When
