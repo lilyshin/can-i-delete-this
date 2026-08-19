@@ -56,11 +56,29 @@ When no particular line is on your mind, scan instead:
 
     /can-i-delete-this:scan src/billing/
 
-That looks for blocks of commented-out code and lists each with the commit
-that commented it out, oldest first. It grades nothing: you pick an item,
-and that item goes through the workflow above. The signal was picked by
-measurement, and `skills/can-i-delete-this/batch-mode.md` has the numbers
-and the boundaries.
+That finds blocks of commented-out code, line comments and `/* */` alike,
+and lists each one with the first lines of its own text and the commit that
+commented it out, oldest first:
+
+    - [ ] **look first** `billing.py:2-6` (5 lines, commented out 1891 days ago)
+          | if order.retryable:
+          | for attempt in range(3):
+          `d624b5f` hotfix: disable retry during gateway outage
+          > Gateway keeps returning 502. Restore after #3391.
+
+It grades nothing. You pick an item, and that item goes through the
+workflow above.
+
+The excerpt lines exist because a commit line is often not enough to tell
+candidates apart. In one real scan, forty of forty-three candidates traced
+to the same 142-file merge, so their commit lines were identical and only
+each block's own text distinguished them. Those lines are real code lifted
+out of the repository, and the checklist says so in its own footer, since
+the person pasting it into an issue is the one who needs to know.
+
+Both signals were picked by measurement rather than taste, and
+`skills/can-i-delete-this/batch-mode.md` has the numbers and the
+boundaries, including what the scan deliberately does not detect.
 
 `path:line` and `path:start-end` go straight to the tracer. A bare symbol is
 looked up first, and the resolved file and line get stated back to you before
@@ -232,10 +250,27 @@ squash가 실제 도입 커밋 위에 쌓이면 blame은 맨 위에 있는 것�
 찾았습니다. 실패와 단서를 포함한 전체 기록은
 `skills/can-i-delete-this/CREATION-LOG.md`와 `tests/pressure/`에 있습니다.
 
-**알려진 한계:** `noise.py`의 키워드 채점은 영어 커밋 메시지만 인식합니다.
-한국어 제목의 포맷터 sweep은 파일이 아무리 많아도 노이즈로 잡히지 않습니다.
-반면 구조적 신호(whitespace-only, vendored·생성 경로, merge, import 비율)와
-pickaxe·line-history는 커밋 메시지를 읽지 않으므로 언어와 무관합니다.
+**커밋 메시지 언어와 컨벤션에 의존하지 않습니다.** 후보를 목록에서 빼는
+판단은 커밋이 **무엇을 바꿨는지**(diff·경로·커밋 그래프)로만 하고, 저자가
+그것을 어떻게 서술했는지로는 하지 않습니다. 그래서 포맷터 sweep은 제목이
+`chore: apply formatter`든 `잡일: 포맷터 일괄 적용`이든 `フォーマッタを適用`이든
+`cleanup`이든 알아볼 수 없는 무엇이든 똑같이 잡힙니다. 제목 어휘는 읽되
+`hints`로 에이전트에게 넘겨 판단 재료로만 씁니다. 제목으로 필터링하면 영어
+외 언어에서 무력해지는 동시에 영어에서는 근거를 삭제합니다. 2만 커밋
+저장소에서 blame이 지목한 커밋이 310파일 PR 형태라 옛 규칙이 버렸는데, 그
+커밋의 대상 파일 diff는 -6/+18로 물어본 그 줄을 실제로 쓴 커밋이었습니다.
+
+**의심할 대상이 딱히 없을 때는 스캔합니다.**
+
+    /can-i-delete-this:scan src/billing/
+
+주석 처리된 코드 블록을 찾아(줄 주석과 `/* */` 모두), 블록의 첫 줄들과
+주석 처리한 커밋을 함께 오래된 순으로 나열합니다. **등급은 매기지 않습니다.**
+목록에서 하나를 고르면 그 항목이 위 워크플로를 탑니다. 발췌를 넣은 이유는
+커밋 정보만으로는 후보가 구분되지 않기 때문입니다. 실제 스캔에서 후보 43건
+중 40건이 같은 142파일 머지 커밋에 걸려 커밋 줄이 전부 동일했고, 각 블록의
+텍스트만이 그것들을 갈랐습니다. 발췌는 저장소의 실제 코드라서 체크리스트를
+이슈에 붙이면 그 코드도 함께 갑니다. 그 사실을 체크리스트 자체가 밝힙니다.
 
 설치는 `/plugin marketplace add lilyshin/can-i-delete-this`. 사용자 파일에
 쓰지 않고, 네트워크를 쓰지 않고, 표준 라이브러리 외 의존성이 없습니다.
