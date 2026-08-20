@@ -77,6 +77,10 @@ _STRINGS = {
             "prefix each line above with your language's own comment marker.",
         "guard.and_more": "and {count} more",
         "guard.and_at_least_more": "and at least {count} more",
+        "guard.list_capped": "and possibly more: {listed} of {total} files "
+            "from this commit are listed",
+        "guard.list_capped_unknown": "and possibly more: this trace does not "
+            "record how many files this commit really touched",
 
         "conditional.title": "Deletion checklist for {path}:{start}",
         "conditional.condition": "- [ ] Confirm the condition that made this "
@@ -171,6 +175,10 @@ _STRINGS = {
             "앞에 사용하는 언어의 주석 기호를 직접 붙이세요.",
         "guard.and_more": "외 {count}개 더",
         "guard.and_at_least_more": "외 최소 {count}개 더",
+        "guard.list_capped": "더 있을 수 있음: 이 커밋이 건드린 파일 {total}개 중 "
+            "{listed}개만 나열됨",
+        "guard.list_capped_unknown": "더 있을 수 있음: 이 커밋이 실제로 몇 개 파일을 "
+            "건드렸는지 이 trace에는 기록되어 있지 않음",
 
         "conditional.title": "{path}:{start} 삭제 체크리스트:",
         "conditional.condition": "- [ ] 이 코드가 필요했던 조건이 더 이상 유효하지 "
@@ -386,42 +394,52 @@ def _tests(trace_data, real_sha=None):
 _MAX_NAMED_GUARDS = 3
 
 
-def _co_changed_capped(trace_data, real_sha):
+def _co_changed_counts(trace_data, real_sha):
+    """(total, present): the true count of every path `real_sha` touched
+    (`co_changed_totals[real_sha]`, recorded by trace.py before it ranks
+    and truncates) and how many of that sha's entries survived into
+    `trace_data["co_changed"]`.
+
+    Returns `(None, None)` when the total cannot be read with confidence:
+    `real_sha` is None, an older trace with no `co_changed_totals` key at
+    all, a value of the wrong shape, no entry for this sha, or a bool (a
+    bool is an int subclass in Python, so `isinstance(True, int)` is True;
+    render.py's own hint rejects the same case on the same field, and
+    reading a bool as a path count would be the same silent-miscount
+    failure).
+    """
+    if real_sha is None:
+        return None, None
+    totals = trace_data.get("co_changed_totals")
+    if not isinstance(totals, dict):
+        return None, None
+    total = totals.get(real_sha)
+    if not isinstance(total, int) or isinstance(total, bool):
+        return None, None
+    present = sum(1 for c in trace_data.get("co_changed", [])
+                  if c.get("sha") == real_sha)
+    return total, present
+
+
+def _co_changed_capped(total, present):
     """Whether `real_sha`'s `co_changed` entries were already cut down by
-    trace.py's per-commit cap before `_tests()` ever filtered them.
+    trace.py's per-commit cap before `_tests()` ever filtered them, given
+    the `(total, present)` pair `_co_changed_counts` returns.
 
-    `co_changed_totals[real_sha]` is the true count of every path that
-    commit touched, recorded before trace.py ranks and truncates; the
-    `co_changed` list itself keeps only the survivors of that cut (see
-    trace.py's own comment on `co_changed_totals`). When the two agree,
-    nothing was cut for this sha and `_tests()` saw every test-looking
-    path it touched, so a remainder computed from `tests` is exact. When
-    they disagree, the cap may have dropped test-looking paths before
-    `_tests()`'s filter ever ran, so any count built from `tests` alone is
-    a lower bound, not a total.
+    When the two agree, nothing was cut for this sha and `_tests()` saw
+    every test-looking path it touched, so a remainder computed from
+    `tests` is exact. When they disagree, the cap may have dropped
+    test-looking paths before `_tests()`'s filter ever ran, so any count
+    built from `tests` alone is a lower bound, not a total.
 
-    The total is also treated as unrecoverable, and this returns True,
-    when it cannot be read with confidence: an older trace with no
-    `co_changed_totals` key at all, a value of the wrong shape, no entry
-    for this sha, or a bool (a bool is an int subclass in Python, so
-    `isinstance(True, int)` is True; render.py's own hint rejects the same
-    case on the same field, and reading a bool as a path count would be
-    the same silent-miscount failure). Folding "unknown" into "capped" is
-    the conservative direction: it can only make a caller say "at least"
+    `total is None` (see `_co_changed_counts`) means the total is
+    unrecoverable, and this returns True for that case too. Folding
+    "unknown" into "capped" is the conservative direction: it can only
+    make a caller say "at least" (or disclose a cut with no numbers)
     where the truth happened to be exact, never the reverse -- claiming
     exactness the data cannot support is the failure this exists to avoid.
     """
-    if real_sha is None:
-        return False
-    totals = trace_data.get("co_changed_totals")
-    if not isinstance(totals, dict):
-        return True
-    total = totals.get(real_sha)
-    if not isinstance(total, int) or isinstance(total, bool):
-        return True
-    present = sum(1 for c in trace_data.get("co_changed", [])
-                  if c.get("sha") == real_sha)
-    return total > present
+    return total is None or total > present
 
 
 def _and_more_text(extra, capped, lang):
@@ -475,9 +493,10 @@ def _guard_text(tests, capped, lang):
     return guard, len(tests) > 1
 
 
-def _guard_lines(tests, capped, lang):
-    """One test path per line, plus a trailing count line when `tests` is
-    cut to `_MAX_NAMED_GUARDS`.
+def _guard_lines(tests, capped, total_changed, present_changed, lang):
+    """One test path per line, plus a trailing disclosure line when either
+    `tests` is cut to `_MAX_NAMED_GUARDS` or the cited commit's
+    `co_changed` list was cut before `_tests()` ever saw it.
 
     This is the shape a `danger` verdict with more than one named guard
     gets in `skeleton()`: a single sentence cannot carry a list, a count
@@ -488,6 +507,29 @@ def _guard_lines(tests, capped, lang):
     and evidence lines, not lines `patch.py` inserts into source, so the
     length pressure that drove this split does not apply to them.
 
+    `extra > 0` (more test-looking paths than `_MAX_NAMED_GUARDS` were
+    found) says so via `_and_more_text`, same as before. But a commit can
+    be capped (`capped` True) while every test-looking path `_tests()`
+    found still fits inside `_MAX_NAMED_GUARDS` -- `extra == 0` -- because
+    trace.py's cap acts on the whole `co_changed` list, not just the
+    test-looking subset of it: files this cap dropped before ranking ever
+    reached `_tests()`'s filter could include tests too, and `tests` alone
+    has no way to see them. Saying nothing there would be exactly the
+    silent cut this project's own disclose-the-cut rule exists to catch,
+    just at the boundary where `extra` happens to be 0 instead of
+    positive. So that case gets its own line, built from `total_changed`/
+    `present_changed` (`_co_changed_counts`'s pair for the cited sha)
+    rather than from `tests`, since `tests` is exactly the count that
+    cannot be trusted here. It never claims a test count -- the cut paths
+    are not known to be tests -- only that the underlying list was cut.
+    When even `total_changed` is unrecoverable (see `_co_changed_counts`),
+    there are no numbers to disclose, so the sentence says that instead of
+    fabricating a count.
+
+    A fully uncapped commit whose test-looking paths all fit unnamed gets
+    no extra line at all: a complete list must stay unlabelled, or every
+    ordinary danger verdict would carry a spurious caveat.
+
     None of these lines carry the comment marker; the caller (`skeleton`)
     adds it, the same as every other line in the danger branch.
     """
@@ -496,6 +538,12 @@ def _guard_lines(tests, capped, lang):
     lines = list(shown)
     if extra > 0:
         lines.append(_and_more_text(extra, capped, lang))
+    elif capped:
+        if total_changed is None:
+            lines.append(_t(lang, "guard.list_capped_unknown"))
+        else:
+            lines.append(_t(lang, "guard.list_capped", listed=present_changed,
+                            total=total_changed))
     return lines
 
 
@@ -549,7 +597,8 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
 
     real_sha = raw_sha if isinstance(raw_sha, str) and raw_sha else None
     tests = _tests(trace_data, real_sha)
-    capped = _co_changed_capped(trace_data, real_sha)
+    total_changed, present_changed = _co_changed_counts(trace_data, real_sha)
+    capped = _co_changed_capped(total_changed, present_changed)
     guard, guard_plural = _guard_text(tests, capped, lang)
 
     if grade == "danger":
@@ -602,7 +651,8 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
             if guard_plural:
                 lines.append(_t(lang, "danger.guard_plural_intro", marker=marker_prefix))
                 guard_prefix = marker_prefix + "  "
-                for guard_line in _guard_lines(tests, capped, lang):
+                for guard_line in _guard_lines(tests, capped, total_changed,
+                                                present_changed, lang):
                     lines.append(guard_prefix + guard_line)
             else:
                 lines.append(_t(lang, "danger.guard", marker=marker_prefix, guard=guard))

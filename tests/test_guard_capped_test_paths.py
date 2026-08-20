@@ -72,7 +72,6 @@ class TestCappedTestPathsGuardLine(unittest.TestCase):
         target_full = Path(self.info["repo"]) / self.info["path"]
         before = target_full.read_text().split("\n")
 
-        import subprocess
         patch_file = Path(self.info["repo"]) / "keep.patch"
         patch_file.write_text(diff)
         applied = subprocess.run(["git", "apply", "keep.patch"],
@@ -98,6 +97,57 @@ class TestCappedTestPathsGuardLine(unittest.TestCase):
         # this observable: report the longest line this real run produced.
         print("\nlongest inserted line ({} chars): {!r}".format(longest,
               max(added, key=len)))
+
+
+class TestCappedTestPathsExtraZero(unittest.TestCase):
+    """The N1 fix's own boundary: `max_co_changed=3` against the same 30
+    test-looking paths leaves exactly `_MAX_NAMED_GUARDS` (3) entries in
+    `co_changed`, so every one of them gets named and `extra` is 0 -- but
+    27 more files this commit touched were never even considered, and the
+    guard block has to say so rather than fall silent just because the
+    remainder count happens to be 0."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.info = make_fixture_repo.build_guard_capped_test_paths(self.tmp.name, n=30)
+        self.result = tracer.trace(
+            self.info["repo"], self.info["path"], self.info["line"], self.info["line"],
+            max_co_changed=3,
+        )
+
+    def test_premise_every_shown_path_is_named_none_left_over(self):
+        sha = self.info["sha"]
+        self.assertEqual(self.result["co_changed_totals"][sha], 30)
+        present = [c for c in self.result["co_changed"] if c["sha"] == sha]
+        self.assertEqual(len(present), 3)
+
+    def test_guard_block_discloses_the_list_cut_not_silence(self):
+        out = artifacts.skeleton("danger", self.result)
+        lines = out.splitlines()
+        self.assertIn(
+            "#   and possibly more: 3 of 30 files from this commit are listed",
+            lines,
+        )
+
+    def test_real_patch_still_applies_with_the_disclosure_line(self):
+        verdict_data = {
+            "grade": "danger",
+            "summary": "This guard prevents a double charge.",
+            "evidence": [{"type": "commit", "ref": self.info["sha"], "role": "introduced"}],
+        }
+        diff = patch.build(self.result, verdict_data, repo=self.info["repo"])
+        self.assertIn(
+            "+    #   and possibly more: 3 of 30 files from this commit are listed",
+            diff.splitlines(),
+        )
+
+        patch_file = Path(self.info["repo"]) / "keep.patch"
+        patch_file.write_text(diff)
+        applied = subprocess.run(["git", "apply", "--check", "keep.patch"],
+                                  cwd=self.info["repo"], capture_output=True, text=True)
+        self.assertEqual(applied.returncode, 0,
+                          "git apply rejected the patch: " + applied.stderr)
 
 
 if __name__ == "__main__":

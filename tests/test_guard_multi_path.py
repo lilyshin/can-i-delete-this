@@ -1,4 +1,5 @@
-"""Regression tests for final-rereview findings N1-N3.
+"""Regression tests for final-rereview findings N1-N3, and for the boundary
+the second re-review round found in the N1 fix itself.
 
 N1: `_guard_text`/`_guard_lines`'s "and N more" tail was computed against
 `co_changed`'s already-capped length, not against what trace.py's
@@ -8,6 +9,15 @@ remainder is larger. N2: nothing in the suite pinned either number in that
 tail, so a mutation that broke the arithmetic (or the "at least" wording)
 would have gone unnoticed. N3: `conditional.run_guard`'s "its name ...
 still passes" reads wrong when `guard` names more than one path.
+
+The N1 fix's own boundary: when the surviving test-looking path count is
+already `<= _MAX_NAMED_GUARDS`, `extra` is 0 and the "and N more"/"and at
+least N more" tail never fires at all, even when the cited commit's
+`co_changed` list was capped -- so a commit that touched far more files
+than are shown said nothing about it. `TestListCappedQuadrants` pins all
+four combinations of {capped, uncapped} x {extra == 0, extra > 0}: only
+the first is new behavior, the other three must render exactly as
+before.
 
 These tests build the trace dict by hand rather than through a fixture
 repo, so the two facts that decide the wording -- how many test-looking
@@ -121,6 +131,77 @@ class TestCappedRemainderSaysAtLeast(unittest.TestCase):
         del trace["co_changed_totals"]
         out = artifacts.skeleton("danger", trace)
         self.assertIn("#   and at least 2 more", out.splitlines())
+
+
+class TestListCappedQuadrants(unittest.TestCase):
+    """The N1 fix's own gap: `extra == 0` and `capped` True produced no
+    disclosure line at all, because the "and N more" tail only ever fires
+    when `extra > 0`. All four combinations pinned here; only the first
+    is new -- the other three must be exactly what they were before this
+    class existed.
+    """
+
+    def _tail(self, out):
+        lines = out.splitlines()
+        return [l for l in lines
+                if l.startswith("#   and") or l.startswith("#   외")
+                or l.startswith("#   더")]
+
+    def test_capped_with_extra_zero_discloses_the_list_cut_en(self):
+        # 3 test-looking paths present (all _MAX_NAMED_GUARDS fit, so
+        # extra is 0), but co_changed_totals says the commit really
+        # touched 12 -- the cap cut 9 files before _tests() ever saw
+        # them. Those 9 are not known to be tests, so the line must not
+        # claim a test count, only that the list itself was cut.
+        out = artifacts.skeleton("danger", _trace(3, 12))
+        self.assertEqual(
+            self._tail(out),
+            ["#   and possibly more: 3 of 12 files from this commit are listed"],
+        )
+
+    def test_capped_with_extra_zero_discloses_the_list_cut_ko(self):
+        out = artifacts.skeleton("danger", _trace(3, 12), lang="ko")
+        self.assertEqual(
+            self._tail(out),
+            ["#   더 있을 수 있음: 이 커밋이 건드린 파일 12개 중 3개만 나열됨"],
+        )
+
+    def test_capped_with_extra_above_zero_is_unchanged(self):
+        # Already covered by TestCappedRemainderSaysAtLeast; repeated here
+        # so all four quadrants are visible side by side in one place.
+        out = artifacts.skeleton("danger", _trace(5, 30))
+        self.assertEqual(self._tail(out), ["#   and at least 2 more"])
+
+    def test_uncapped_with_extra_zero_stays_silent(self):
+        # A complete list -- co_changed_totals agrees with what is
+        # present, and every test-looking path fits without a count --
+        # must not gain a disclosure line just because this class exists.
+        # Saying something here would be the mirror-image bug: labelling
+        # a complete list as partial.
+        out = artifacts.skeleton("danger", _trace(2, 2))
+        self.assertEqual(self._tail(out), [])
+        self.assertNotIn("possibly more", out)
+        self.assertNotIn("나열됨", out)
+
+    def test_uncapped_with_extra_above_zero_is_unchanged(self):
+        # Already covered by TestUncappedRemainderIsExact, repeated here
+        # for the same side-by-side reason as above.
+        out = artifacts.skeleton("danger", _trace(4, 4))
+        self.assertEqual(self._tail(out), ["#   and 1 more"])
+
+    def test_unknown_total_with_extra_zero_has_no_numbers_to_disclose(self):
+        # An old-format trace with no co_changed_totals key cannot say how
+        # many files the commit really touched, so the disclosure line
+        # cannot claim specific numbers either -- it has to say that the
+        # count itself is unknown, not fabricate a total.
+        trace = _trace(3, 3)
+        del trace["co_changed_totals"]
+        out = artifacts.skeleton("danger", trace)
+        self.assertEqual(
+            self._tail(out),
+            ["#   and possibly more: this trace does not record how many "
+             "files this commit really touched"],
+        )
 
 
 class TestConditionalRunGuardPlural(unittest.TestCase):
