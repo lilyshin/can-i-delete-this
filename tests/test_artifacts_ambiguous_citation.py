@@ -12,11 +12,16 @@ gap never fires there; it only fires when a caller invokes `skeleton()`
 directly with no evidence at all, which is exactly what happened during
 the 0.9.2 field run this test reproduces.
 
-The fix routes this case through the same "citation could not be
-verified" text an unresolved citation already gets (see `_top`'s
-"unresolved" branch and `_unresolved_citation_text`), rather than a new
-string: both situations leave the reader in the same place -- no
-candidate named, and the grade must not be treated as confirmed.
+`_ambiguous_citation_text` is a distinct sentence pair from
+`_unresolved_citation_text`'s, not a reuse of it (see task-1-review's I1):
+reusing the unresolved-citation wording asserted a citation had been made
+and failed to resolve ("the verdict cites commit unknown as evidence"),
+which was false when no citation was made at all -- the missing-sha
+placeholder leaked straight into prose, in both languages. The fix names
+only the candidate *count* (a plain git fact that explains why nothing
+could be named) and never the candidates themselves, since listing shas
+would invite picking the first one, the original bug wearing a different
+hat.
 `tests/test_patch.py::TestRefusals::test_ambiguous_no_evidence_citation_is_refused`
 covers that `patch.py` refuses to build a patch from this text, the same
 way it already refuses an unresolved citation.
@@ -31,13 +36,14 @@ import artifacts
 
 _SHA_OLD = "b1b1b1b" + "1" * 33
 _SHA_NEW = "c2c2c2c" + "2" * 33
+_SHA_NEWEST = "d3d3d3d" + "3" * 33
 
 
 def _ambiguous_trace(n_candidates):
     """A trace with `n_candidates` introduction_candidates and no evidence
-    to say which one is real. `n_candidates` clamps to 2, the shape that
-    matters here: `_SHA_OLD` is deliberately the chronologically oldest
-    entry, so a fallback to `introduction_candidates[0]` would name it.
+    to say which one is real (1 to 3). `_SHA_OLD` is deliberately the
+    chronologically oldest entry, so a fallback to
+    `introduction_candidates[0]` would name it.
     """
     candidates = [
         {"sha": _SHA_OLD, "subject": "feat: add rate limiter",
@@ -46,6 +52,9 @@ def _ambiguous_trace(n_candidates):
         {"sha": _SHA_NEW, "subject": "fix: adjust limiter threshold",
          "date": "2021-06-01T00:00:00+00:00", "author": "Choco",
          "author_email": "choco@example.com", "why": "pickaxe"},
+        {"sha": _SHA_NEWEST, "subject": "fix: another limiter tweak",
+         "date": "2022-03-01T00:00:00+00:00", "author": "Neo",
+         "author_email": "neo@example.com", "why": "pickaxe"},
     ][:n_candidates]
     return {
         "target": {"path": "app/limiter.py", "start": 5, "end": 5},
@@ -55,7 +64,7 @@ def _ambiguous_trace(n_candidates):
     }
 
 
-class TestAmbiguousNoEvidenceIsUnresolvedNotAGuess(unittest.TestCase):
+class TestAmbiguousNoEvidenceIsADistinctHonestSentence(unittest.TestCase):
     def test_two_candidates_no_evidence_names_no_specific_candidate(self):
         out = artifacts.skeleton("danger", _ambiguous_trace(2))
         self.assertNotIn(_SHA_OLD[:7], out)
@@ -63,9 +72,36 @@ class TestAmbiguousNoEvidenceIsUnresolvedNotAGuess(unittest.TestCase):
         self.assertNotIn("rate limiter", out)
         self.assertNotIn("limiter threshold", out)
 
-    def test_two_candidates_no_evidence_carries_the_unresolved_warning(self):
+    def test_two_candidates_no_evidence_names_the_candidate_count(self):
         out = artifacts.skeleton("danger", _ambiguous_trace(2))
-        self.assertIn("could not be verified", out)
+        self.assertIn("2", out)
+        self.assertIn("as confirmed", out)
+        self.assertIn("No commit was cited", out)
+
+    def test_three_candidates_reports_three_not_a_stale_count(self):
+        out = artifacts.skeleton("danger", _ambiguous_trace(3))
+        self.assertIn("3", out)
+        self.assertNotIn(" 2 ", out)
+
+    def test_does_not_claim_a_citation_was_made(self):
+        # I1: reusing _unresolved_citation_text asserted "the verdict cites
+        # commit {cited}" even though no citation was made at all, and the
+        # missing-sha placeholder ("unknown"/"알 수 없음") leaked into the
+        # sentence as if it were a real (if unverifiable) ref. Neither may
+        # appear here: no citation was made, so there is nothing to call
+        # unresolved or unknown.
+        out = artifacts.skeleton("danger", _ambiguous_trace(2))
+        self.assertNotIn("cites commit", out)
+        self.assertNotIn("commit unknown", out)
+        self.assertNotIn("unknown", out)
+
+    def test_does_not_point_at_a_citation_to_check_by_hand(self):
+        # unresolved.warning's remedy ("re-run the trace or check the
+        # citation by hand") points at a citation that does not exist in
+        # this branch; the remedy here has to be what actually recovers
+        # this case instead.
+        out = artifacts.skeleton("danger", _ambiguous_trace(2))
+        self.assertNotIn("check the citation by hand", out)
 
     def test_none_and_empty_list_evidence_behave_the_same(self):
         self.assertEqual(
@@ -81,7 +117,15 @@ class TestAmbiguousNoEvidenceIsUnresolvedNotAGuess(unittest.TestCase):
             with self.subTest(grade=grade):
                 out = artifacts.skeleton(grade, _ambiguous_trace(2))
                 self.assertNotIn(_SHA_OLD[:7], out)
-                self.assertIn("could not be verified", out)
+                self.assertIn("as confirmed", out)
+                self.assertIn("No commit was cited", out)
+
+    def test_ko_names_no_specific_candidate_and_reports_the_count(self):
+        out = artifacts.skeleton("danger", _ambiguous_trace(2), lang="ko")
+        self.assertNotIn(_SHA_OLD[:7], out)
+        self.assertIn("2", out)
+        self.assertIn("확정된 것으로 보지 마세요", out)
+        self.assertNotIn("알 수 없음", out)
 
 
 class TestSingleCandidateStillResolvesWithoutEvidence(unittest.TestCase):

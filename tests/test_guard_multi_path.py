@@ -265,6 +265,31 @@ class TestSingleGuardIsAlsoLineSplit(unittest.TestCase):
         self.assertNotIn("t/case_01_test.py", intro[0])
         self.assertIn("#   t/case_01_test.py", lines)
 
+    def test_intro_line_is_singular_not_plural_wording_en(self):
+        # I2: forcing intro_key to the plural key unconditionally passed
+        # every test in this suite until this pin existed, because the
+        # two intro/path/closing tests above only check the shared prefix
+        # ("# Before deleting"), which both the singular and plural
+        # sentences start with. Pinned verbatim, the same way
+        # TestUncappedRemainderIsExact::test_intro_line_is_plural_and_marker_prefixed
+        # pins the plural sentence.
+        out = artifacts.skeleton("danger", _trace(1, 1))
+        self.assertIn(
+            "# Before deleting, confirm this still passes (its name looks "
+            "like a test, not confirmed):",
+            out.splitlines(),
+        )
+        self.assertNotIn("confirm these still pass", out)
+
+    def test_intro_line_is_singular_not_plural_wording_ko(self):
+        out = artifacts.skeleton("danger", _trace(1, 1), lang="ko")
+        self.assertIn(
+            "# 삭제하기 전에 아래 파일이 통과하는지 확인하세요"
+            "(이름상 테스트로 보이나 확인되지 않음):",
+            out.splitlines(),
+        )
+        self.assertNotIn("파일들이 모두 통과하는지", out)
+
     def test_single_guard_keeps_the_singular_closing_wording(self):
         out = artifacts.skeleton("danger", _trace(1, 1))
         self.assertIn(
@@ -345,6 +370,56 @@ class TestGuardLineLengthDiscipline(unittest.TestCase):
             for p in long_paths:
                 stripped = stripped.replace(p, "")
             self.assertLessEqual(len(stripped), 100, repr(line))
+
+
+class TestGuardBlockLineOrder(unittest.TestCase):
+    """I3: nothing in the suite pinned the guard block's line *order*,
+    only that each line existed somewhere in the output. Emitting the
+    path lines above the intro line still passes every marker-prefix and
+    presence check these tests otherwise run, and produces a well-formed
+    marker-prefixed comment that `patch.py` will happily nail into the
+    user's source file -- with the intro's "confirm this still passes:"
+    colon pointing at nothing above it, and the path floating under the
+    KEEP line instead of under its own intro. That is exactly the durable,
+    unreadable-in-review defect class this project ranks worst, so order
+    is checked here with index comparisons on the split lines, not
+    substring presence, for both the single-path case (pinned as an exact
+    sequence) and a capped multi-path case whose tail line's position also
+    needs pinning.
+    """
+
+    def test_single_path_block_is_exactly_keep_intro_path_closing_in_order(self):
+        out = artifacts.skeleton("danger", _trace(1, 1))
+        self.assertEqual(out.splitlines(), [
+            "# KEEP: hotfix: prevent double charge (#4127) (2026-08-20, a3f8c21)",
+            "# Before deleting, confirm this still passes (its name looks "
+            "like a test, not confirmed):",
+            "#   t/case_01_test.py",
+            "# If it is not a test, no test guards this: add one before "
+            "touching it.",
+        ])
+
+    def test_multi_path_keeps_intro_before_paths_before_tail_before_closing(self):
+        # _trace(5, 30): 5 test-looking paths present, 3 named
+        # (_MAX_NAMED_GUARDS), a capped "and at least 2 more" tail line,
+        # then the closing line -- four line kinds in one block, so the
+        # order among all four is pinned at once.
+        out = artifacts.skeleton("danger", _trace(5, 30))
+        lines = out.splitlines()
+        intro_idx = lines.index(
+            "# Before deleting, confirm these still pass (names look "
+            "like tests, not confirmed):"
+        )
+        path_idxs = [lines.index("#   t/case_{:02d}_test.py".format(i))
+                     for i in (1, 2, 3)]
+        tail_idx = lines.index("#   and at least 2 more")
+        closing_idx = lines.index(
+            "# If none of these are tests, no test guards this: add one "
+            "before touching it."
+        )
+        self.assertLess(intro_idx, min(path_idxs))
+        self.assertLess(max(path_idxs), tail_idx)
+        self.assertLess(tail_idx, closing_idx)
 
 
 if __name__ == "__main__":

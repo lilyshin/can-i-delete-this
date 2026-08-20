@@ -62,6 +62,10 @@ _STRINGS = {
         "not_introduction.cited": "The verdict's evidence cites {cited}, but none of "
             "it is tagged as the real introduction (role: introduced, or no role at "
             "all). This trace has nothing to attribute this artifact to.",
+        "ambiguous.no_citation": "No commit was cited as evidence, and this trace has "
+            "{count} introduction candidates to choose from.",
+        "ambiguous.warning": "Do not treat this grade as confirmed until a verdict "
+            "that cites one of them with evidence is written.",
 
         "danger.keep": "{marker}KEEP: {subject} ({day}, {sha})",
         "danger.guard_intro": "{marker}Before deleting, confirm this still passes "
@@ -159,6 +163,10 @@ _STRINGS = {
         "not_introduction.cited": "검증(verdict)의 근거가 {cited}을 인용했지만, 그중 "
             "어느 것도 실제 도입(role: introduced 또는 role 없음)으로 표시되어 있지 "
             "않습니다. 이 trace에는 이 결과물의 근거로 삼을 대상이 없습니다.",
+        "ambiguous.no_citation": "근거로 인용된 커밋이 없고, 이 trace에는 "
+            "introduction candidates가 {count}개 있습니다.",
+        "ambiguous.warning": "이 중 하나를 근거로 인용한 verdict가 나오기 전까지는 "
+            "이 등급을 확정된 것으로 보지 마세요.",
 
         "danger.keep": "{marker}유지: {subject} ({day}, {sha})",
         "danger.guard_intro": "{marker}삭제하기 전에 아래 파일이 통과하는지 확인하세요"
@@ -356,17 +364,61 @@ def _unresolved_citation_text(grade, target, refs, *, lang="en"):
     and the reader needs to know the attribution has not been verified
     rather than be handed a confident guess (see _top's "unresolved"
     branch for why guessing is exactly the bug this avoids).
+
+    `refs` must be non-empty: this is only ever called from `_top`'s
+    "unresolved" status, which `_top` can only return when `real_refs`
+    (what becomes `refs` here) was truthy in the first place -- a citation
+    was made, it just names nothing in this trace. The "no citation was
+    made at all" case is a different situation with a different sentence
+    (see `_ambiguous_citation_text`), not a bare `refs`, so this does not
+    fall back to a placeholder for an empty `refs` the way it once did:
+    a fallback written for a case that cannot happen at this call site is
+    exactly the kind of dead code that becomes live and wrong the moment a
+    future caller passes it something falsy.
     """
     unknown = _t(lang, "common.unknown")
     path = target.get("path", unknown)
     start = target.get("start", unknown)
-    cited = ", ".join(refs) if refs else unknown
+    cited = ", ".join(refs)
     return "\n".join([
         "{}: {}".format(_t(lang, "label.grade"), grade),
         "{}: {}:{}".format(_t(lang, "label.target"), path, start),
         "",
         _t(lang, "unresolved.cited", cited=cited),
         _t(lang, "unresolved.warning"),
+    ])
+
+
+def _ambiguous_citation_text(grade, target, count, *, lang="en"):
+    """Artifact text for `_top`'s "ambiguous" status: no evidence was
+    passed at all, and more than one `introduction_candidates` entry
+    exists, so nothing names which one this artifact is about.
+
+    This is a distinct case from `_unresolved_citation_text`'s, not a
+    reuse of it: that function's wording asserts a citation was made and
+    failed to resolve ("the verdict cites commit {cited} ... but no commit
+    with that prefix was found"), which is false here -- no citation was
+    made at all, so there is no `cited` value to report, not even
+    "unknown". Naming the candidates themselves (or their count-many shas)
+    would invite a reader to pick the first one by hand, which is exactly
+    the M2 misattribution `_top`'s "ambiguous" branch exists to stop, so
+    only `count` (a plain git fact: how many candidates this trace found)
+    is reported, never the candidates.
+
+    Keeps the same `Grade:`/`Target:` header `_unresolved_citation_text`
+    uses: that header, not the sentence, is what makes `patch.py`'s
+    per-line marker check refuse this text (see `_comment_lines`), so the
+    refusal holds regardless of which sentence follows it.
+    """
+    unknown = _t(lang, "common.unknown")
+    path = target.get("path", unknown)
+    start = target.get("start", unknown)
+    return "\n".join([
+        "{}: {}".format(_t(lang, "label.grade"), grade),
+        "{}: {}:{}".format(_t(lang, "label.target"), path, start),
+        "",
+        _t(lang, "ambiguous.no_citation", count=count),
+        _t(lang, "ambiguous.warning"),
     ])
 
 
@@ -616,13 +668,12 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
         # exists, so nothing here singles one out -- see _top's
         # "ambiguous" branch for why guessing introduction_candidates[0]
         # anyway would be the exact misattribution this status exists to
-        # stop. `real_refs` is empty in this branch (see _top), so this
-        # reuses `_unresolved_citation_text`'s existing "citation could
-        # not be verified" wording rather than inventing a separate
-        # message for "no citation was even attempted": both leave the
-        # reader in the same place, naming no candidate and saying not to
-        # treat the grade as confirmed.
-        return _unresolved_citation_text(grade, target, real_refs, lang=lang)
+        # stop. This is a distinct sentence from `_unresolved_citation_text`,
+        # not a reuse of it: that text asserts a citation was made and
+        # failed to resolve, which would be false here -- no citation was
+        # made at all. See `_ambiguous_citation_text`'s docstring.
+        cands = trace_data.get("introduction_candidates") or []
+        return _ambiguous_citation_text(grade, target, len(cands), lang=lang)
 
     # Every field below is checked with isinstance() before use, not coerced
     # with str(). str(x) turns a missing/None date into "" or "None" and lets
@@ -669,10 +720,11 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
         lines = [_t(lang, "danger.keep", marker=marker_prefix,
                     subject=subject or _t(lang, "common.reason_unknown"),
                     day=day, sha=sha)]
-        if guard:
-            # `guard` is a name match (noise.is_test_path), never a
-            # confirmed one -- see _tests()'s docstring. Naming it is not
-            # enough on its own: stopping there would let a name-only
+        if tests:
+            # Each path in `tests` (rendered below by `_guard_lines`) is a
+            # name match (noise.is_test_path), never a confirmed one -- see
+            # _tests()'s docstring. Naming it is not enough on its own:
+            # stopping there would let a name-only
             # match silently take the place of danger.warning's "no test
             # guards this" for a reader who never opens the path to
             # check. danger.guard_unverified is the same warning
