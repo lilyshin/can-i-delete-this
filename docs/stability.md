@@ -57,8 +57,12 @@ These keys, and what they hold, are stable:
 - `introduction_candidates`: a list of candidates, each with `sha`,
   `subject`, `date`, and `why` (how the candidate was found, e.g.
   `"pickaxe"`, `"blame"`, `"cited"`).
-- `blame_candidates`: the same shape, sourced from `git blame` instead of
-  pickaxe and line history.
+- `blame_candidates`: a list of candidates sourced from `git blame`
+  instead of pickaxe and line history, each with `sha`, `subject`, and
+  `date`. Unlike `introduction_candidates`, there is no `why` here, since
+  every entry is a blame hit by construction. Each entry also carries a
+  noise assessment; its keys and values follow the noise-scoring rules,
+  which are not stable (see "What is not stable" below).
 - `target`: the path and line range under investigation.
 
 ## What is not stable
