@@ -1213,7 +1213,13 @@ def render(trace_data, verdict_data, *, lang="en"):
         totals_known = True
         for sha in shown_by_sha:
             total = co_changed_totals.get(sha)
-            if not isinstance(total, int):
+            # bool is an int subclass in Python, so isinstance(True, int) is
+            # True; without the extra bool check a {sha: True} total (never
+            # written by trace.py, but not impossible in a hand-edited or
+            # third-party trace) would be silently read as a path count of
+            # 1, hiding a real cut. patch.py's _int_or_none rejects bools
+            # for the same reason; see that function's own comment.
+            if not isinstance(total, int) or isinstance(total, bool):
                 totals_known = False
                 break
             total_true += total

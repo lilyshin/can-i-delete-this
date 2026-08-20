@@ -864,7 +864,7 @@ def build_korean_paths(dest: str) -> dict:
     target file's own path never string-equals its escaped form, so
     self-exclusion (trace.py's `p != path` check) fails and the target
     shows up in its own co-changed list; the leading quote character
-    corrupts `posixpath.split`, so `artifacts._is_test_path` can no longer
+    corrupts `posixpath.split`, so `noise.is_test_path` can no longer
     recognize the (perfectly ordinary, ASCII) `tests/` directory segment
     once the rest of the path is non-ASCII; and render.py would show the
     raw escaped garbage to the user. This fixture reproduces all three in
@@ -879,7 +879,7 @@ def build_korean_paths(dest: str) -> dict:
     # Deliberately no English "test"/"spec" filename marker: recognition
     # here must come from the ASCII `tests/` directory segment alone, not
     # from a filename suffix, so the fixture actually exercises the
-    # directory-segment path in `artifacts._is_test_path` rather than
+    # directory-segment path in `noise.is_test_path` rather than
     # accidentally passing for an unrelated reason.
     test_file = test_dir / "결제_확인.py"
     test_file.write_text("def check_charge():\n    pass\n")
@@ -1595,4 +1595,43 @@ def build_co_changed_cap(dest: str, *, name: str = "co_changed_cap") -> dict:
         "base_other_path": "misc/base_helper.py",
         "big_total": 6,  # test + 2 same-dir + 3 far, target itself excluded
         "base_total": 1,  # base_other, target itself excluded
+    }
+
+
+def build_guard_name_collision(dest: str, *, name: str = "guard_name_collision") -> dict:
+    """One commit that co-changes a `Test$` false positive ahead of a genuine
+    test, alphabetically, alongside the target.
+
+    Regression fixture for the final-review I1 finding: `noise.is_test_path`
+    recognizes both `billing/ABTest.kt` (an A/B-experiment flag holder, not a
+    test suite -- see that function's docstring for why the false positive
+    is an accepted cost) and `tests/payment_test.py` (a genuine test) as
+    test-looking paths. Git's own path order is alphabetical, so
+    `ABTest.kt` sorts before `payment.py` sorts before `tests/...`, meaning
+    `ABTest.kt` is first in `co_changed` and a guard line that only ever
+    named the first match would name the false positive and never the real
+    test that actually guards the target.
+    """
+    repo = _init(dest, name)
+    billing = repo / "billing"
+    billing.mkdir(parents=True)
+    tests_dir = repo / "tests"
+    tests_dir.mkdir(parents=True)
+
+    false_positive = billing / "ABTest.kt"
+    target = billing / "payment.py"
+    test_file = tests_dir / "payment_test.py"
+
+    false_positive.write_text("// A/B experiment flag holder, NOT a test suite\n")
+    target.write_text("def charge(order):\n    return order.total\n")
+    test_file.write_text("def test_charge_is_idempotent():\n    assert True\n")
+    real_sha = _commit(repo, "hotfix: prevent double charge (#4127)", "2026-08-20T09:00:00")
+
+    return {
+        "repo": str(repo),
+        "path": "billing/payment.py",
+        "line": 1,
+        "real_sha": real_sha,
+        "false_positive_path": "billing/ABTest.kt",
+        "test_path": "tests/payment_test.py",
     }

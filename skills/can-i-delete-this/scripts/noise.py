@@ -133,16 +133,23 @@ def is_test_path(path):
 
     That check carries no other condition on what precedes "Test": it
     matches "ABTest.kt" (an A/B-test feature class, not a test suite) just
-    as readily as "FooTest.kt". That is an accepted, deliberate cost, not
-    an oversight -- see _CAMEL_TEST_SUFFIX's own comment for the false
-    positives an earlier, narrower version of this pattern let through
+    as readily as "FooTest.kt". The same absence of a condition applies to
+    a directory segment: a directory named "ABTest/" is itself a match, so
+    every path beneath it -- "ABTest/inspector.py", "ABTest/specification.md",
+    every other file the directory contains -- is swept in as a test path
+    too, not just that one directory entry. That is an accepted, deliberate
+    cost, not an oversight -- see _CAMEL_TEST_SUFFIX's own comment for the
+    false positives an earlier, narrower version of this pattern let through
     instead. The asymmetry this module is built on (see the module
-    docstring) is why the trade is made in this direction: a false
-    positive here costs a reader one extra file open to see that
-    "ABTest.kt" is not actually a test; a false negative silently drops a
-    real co-changed test out of trace.py's tier-0 priority (see
-    trace._co_changed_priority) and tells an agent "no test guards this"
-    about a target a test genuinely does guard. The first costs a minute;
+    docstring) is why the trade is made in this direction: a false positive
+    on a single filename costs a reader one extra file open to see that
+    "ABTest.kt" is not actually a test; a false positive on a directory
+    costs that same check repeated for every file underneath it, which is
+    more than one file open but still a bounded, one-time read. A false
+    negative silently drops a real co-changed test out of trace.py's
+    tier-0 priority (see trace._co_changed_priority) and tells an agent "no
+    test guards this" about a target a test genuinely does guard. Even the
+    widest directory sweep is cheaper than that: the first costs minutes,
     the second is the wrong-direction, unrecoverable failure this whole
     module exists to avoid.
 

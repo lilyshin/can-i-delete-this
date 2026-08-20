@@ -68,9 +68,12 @@ _STRINGS = {
             "test, not confirmed) still passes.",
         "danger.guard_unverified": "{marker}If it is not a test, no test guards this: "
             "add one before touching it.",
+        "danger.guard_unverified_plural": "{marker}If none of these are tests, no test "
+            "guards this: add one before touching it.",
         "danger.warning": "{marker}WARNING: no test guards this. Add one before touching it.",
         "danger.no_marker": "No comment marker is known for this file type; "
             "prefix each line above with your language's own comment marker.",
+        "guard.and_more": "and {count} more",
 
         "conditional.title": "Deletion checklist for {path}:{start}",
         "conditional.condition": "- [ ] Confirm the condition that made this "
@@ -153,10 +156,13 @@ _STRINGS = {
             "않음)가 통과하는지 확인하세요.",
         "danger.guard_unverified": "{marker}테스트가 아니라면 이 코드를 지켜주는 테스트가 "
             "없는 것이니, 손대기 전에 추가하세요.",
+        "danger.guard_unverified_plural": "{marker}이 중 테스트가 하나도 없다면 이 코드를 "
+            "지켜주는 테스트가 없는 것이니, 손대기 전에 추가하세요.",
         "danger.warning": "{marker}주의: 이 코드를 지켜주는 테스트가 없습니다. 손대기 전에 "
             "테스트를 추가하세요.",
         "danger.no_marker": "이 파일 종류에 해당하는 주석 기호를 알 수 없습니다. 위 각 줄 "
             "앞에 사용하는 언어의 주석 기호를 직접 붙이세요.",
+        "guard.and_more": "외 {count}개 더",
 
         "conditional.title": "{path}:{start} 삭제 체크리스트:",
         "conditional.condition": "- [ ] 이 코드가 필요했던 조건이 더 이상 유효하지 "
@@ -367,6 +373,38 @@ def _tests(trace_data, real_sha=None):
             and c.get("sha") == real_sha]
 
 
+_MAX_NAMED_GUARDS = 3
+
+
+def _guard_text(tests, lang):
+    """Build the guard line's value, naming up to `_MAX_NAMED_GUARDS` of
+    `tests` and disclosing any remainder as a count instead of dropping it.
+
+    `tests` is in git's own path order (whatever `_tests()`/`co_changed`
+    returned), never reordered here. Naming only `tests[0]` (the previous
+    behavior) let a `Test$` false positive sitting before a genuine test
+    hide that genuine test from the reader entirely, and worse, let
+    danger.guard_unverified's caveat below read as though nothing else in
+    `tests` existed. Silently naming a subset (3 of 9, say) would repeat
+    the same mistake at a smaller scale, so anything left unnamed is
+    counted, not dropped -- the same disclose-the-cut stance render.py
+    takes for `co_changed` itself.
+
+    Returns `(guard, plural)`. `guard` is None when `tests` is empty.
+    `plural` is True whenever more than one path is being described, named
+    or only counted, so the caller can pick a grammatically matching
+    string for danger.guard_unverified.
+    """
+    if not tests:
+        return None, False
+    shown = tests[:_MAX_NAMED_GUARDS]
+    extra = len(tests) - len(shown)
+    guard = ", ".join(shown)
+    if extra > 0:
+        guard = "{}, {}".format(guard, _t(lang, "guard.and_more", count=extra))
+    return guard, len(tests) > 1
+
+
 def skeleton(grade, trace_data, evidence=None, *, lang="en"):
     """Return a fill-in-the-blank artifact for the agent to complete.
 
@@ -416,7 +454,7 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
     day = raw_date[:10] if isinstance(raw_date, str) and raw_date else _t(lang, "common.date_unknown")
 
     tests = _tests(trace_data, raw_sha if isinstance(raw_sha, str) and raw_sha else None)
-    guard = tests[0] if tests else None
+    guard, guard_plural = _guard_text(tests, lang)
 
     if grade == "danger":
         # patch.py turns this block into a diff that inserts it into the
@@ -453,9 +491,14 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
             # anything actually guards the target. danger.guard_unverified
             # is the same warning danger.warning gives, conditioned on
             # `guard` turning out not to be a real test, so that path is
-            # never silently dropped just because a name matched.
+            # never silently dropped just because a name matched. `guard`
+            # can name more than one path (see _guard_text); the sentence
+            # must then say "none of these", not "it", or it misreports how
+            # many candidates it is talking about.
             lines.append(_t(lang, "danger.guard", marker=marker_prefix, guard=guard))
-            lines.append(_t(lang, "danger.guard_unverified", marker=marker_prefix))
+            guard_key = "danger.guard_unverified_plural" if guard_plural \
+                else "danger.guard_unverified"
+            lines.append(_t(lang, guard_key, marker=marker_prefix))
         else:
             lines.append(_t(lang, "danger.warning", marker=marker_prefix))
         if marker is None:

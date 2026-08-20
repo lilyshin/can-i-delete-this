@@ -24,6 +24,7 @@ and a caller re-rendering an old saved trace.json is a real scenario, not a
 hypothetical.
 """
 
+import copy
 import re
 import sys
 import unittest
@@ -83,7 +84,7 @@ class TestUncappedCommitIsNotDescribedAsTruncated(unittest.TestCase):
     """
 
     def setUp(self):
-        self.trace = dict(_BASE_TRACE)
+        self.trace = copy.deepcopy(_BASE_TRACE)
         self.trace["co_changed"] = [
             {"path": "payment_test.py", "sha": _SHA},
             {"path": "payment_helpers.py", "sha": _SHA},
@@ -113,7 +114,7 @@ class TestCappedCommitDisclosesShownAndTotal(unittest.TestCase):
     """
 
     def setUp(self):
-        self.trace = dict(_BASE_TRACE)
+        self.trace = copy.deepcopy(_BASE_TRACE)
         self.trace["co_changed"] = [
             {"path": "payment_test.py", "sha": _SHA},
             {"path": "payment_helpers.py", "sha": _SHA},
@@ -122,17 +123,21 @@ class TestCappedCommitDisclosesShownAndTotal(unittest.TestCase):
         self.trace["co_changed_totals"] = {_SHA: 7}
 
     def test_english_hint_names_both_counts(self):
+        # Pinned as an ordered phrase, not two order-free digit checks: the
+        # latter passes just as well when `shown` and `total` are swapped
+        # (rendering the nonsensical "7 of 2 shown"), which is exactly the
+        # mutation this test exists to catch. See render.py's hint.co_changed_capped.
         html = render.render(self.trace, _VERDICT, lang="en")
         block = _hint_block(html)
-        self.assertIn("2", block)
-        self.assertIn("7", block)
+        self.assertIn("2 of 7", block)
         self.assertIn("payment_test.py", block)
 
     def test_korean_hint_names_both_counts(self):
+        # Same ordering pin as the English test above, against the ko
+        # template's "total 개 중 shown 개" phrasing (see hint.co_changed_capped).
         html = render.render(self.trace, _VERDICT, lang="ko")
         block = _hint_block(html)
-        self.assertIn("2", block)
-        self.assertIn("7", block)
+        self.assertIn("총 7개 중 2개만 표시", block)
         self.assertIn("payment_test.py", block)
 
     def test_multiple_cited_commits_aggregate_shown_and_total(self):
@@ -159,8 +164,10 @@ class TestCappedCommitDisclosesShownAndTotal(unittest.TestCase):
         html = render.render(self.trace, verdict, lang="en")
         block = _hint_block(html)
         # shown: 2 (a3f8c21) + 1 (b7d2e90) = 3; total: 7 (a3f8c21) + 1 (b7d2e90) = 8.
-        self.assertIn("3", block)
-        self.assertIn("8", block)
+        # Pinned as the ordered phrase "3 of 8", not two order-free digit
+        # checks, for the same reason as test_english_hint_names_both_counts
+        # above.
+        self.assertIn("3 of 8", block)
 
 
 class TestMissingTotalsFallsBackToPlainList(unittest.TestCase):
@@ -174,7 +181,7 @@ class TestMissingTotalsFallsBackToPlainList(unittest.TestCase):
     """
 
     def setUp(self):
-        self.trace = dict(_BASE_TRACE)
+        self.trace = copy.deepcopy(_BASE_TRACE)
         self.trace["co_changed"] = [{"path": "payment_test.py", "sha": _SHA}]
         # No co_changed_totals key at all -- the pre-Task-1 shape.
 
@@ -197,6 +204,40 @@ class TestMissingTotalsFallsBackToPlainList(unittest.TestCase):
         block = _hint_block(html)
         self.assertIn("payment_test.py", block)
         self.assertNotIn("capped", block.lower())
+
+    def test_bool_total_for_one_sha_is_not_read_as_a_path_count(self):
+        # bool is an int subclass in Python (isinstance(True, int) is
+        # True), so a co_changed_totals entry of True must not be read as
+        # a path count of 1 -- see render.py's isinstance(total, int)
+        # guard, which now also excludes bool, matching the stance
+        # patch.py's _int_or_none already takes on the same value shape.
+        #
+        # Two cited commits: sha_a's total is the malformed True, sha_b's
+        # total is a real, larger int. If True were read as 1, the
+        # aggregate (1 + 10 = 11) would exceed total_shown (2) and the
+        # report would disclose a wrong "2 of 11" cut instead of falling
+        # back to the plain list the all-or-nothing stance requires when
+        # any cited commit's total is unknown.
+        other_sha = "b7d2e90" + "0" * 33
+        self.trace["introduction_candidates"].append({
+            "sha": other_sha, "why": "blame",
+            "subject": "fix: unrelated cleanup",
+            "date": "2020-01-01T00:00:00+00:00", "author": "Han",
+            "author_email": "han@example.com", "files_changed": 1,
+        })
+        self.trace["co_changed"].append({"path": "cleanup_test.py", "sha": other_sha})
+        self.trace["co_changed_totals"] = {_SHA: True, other_sha: 10}
+        verdict = dict(_VERDICT)
+        verdict["evidence"] = [
+            {"type": "commit", "ref": "a3f8c21", "note": "introduced during incident"},
+            {"type": "commit", "ref": "b7d2e90", "note": "also introduced"},
+        ]
+        html = render.render(self.trace, verdict, lang="en")
+        block = _hint_block(html)
+        self.assertIn("payment_test.py", block)
+        self.assertIn("cleanup_test.py", block)
+        self.assertNotIn("capped", block.lower())
+        self.assertNotIn("11", block)
 
 
 if __name__ == "__main__":
