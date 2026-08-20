@@ -64,7 +64,8 @@ _STRINGS = {
             "all). This trace has nothing to attribute this artifact to.",
 
         "danger.keep": "{marker}KEEP: {subject} ({day}, {sha})",
-        "danger.guard": "{marker}Before deleting, confirm {guard} still passes.",
+        "danger.guard": "{marker}Before deleting, confirm {guard} (its name looks like a "
+            "test, not confirmed) still passes.",
         "danger.warning": "{marker}WARNING: no test guards this. Add one before touching it.",
         "danger.no_marker": "No comment marker is known for this file type; "
             "prefix each line above with your language's own comment marker.",
@@ -73,7 +74,8 @@ _STRINGS = {
         "conditional.condition": "- [ ] Confirm the condition that made this "
             "necessary no longer holds",
         "conditional.introduced": "- [ ] Introduced in {sha} ({subject})",
-        "conditional.run_guard": "- [ ] Run {guard}",
+        "conditional.run_guard": "- [ ] Run {guard} (its name looks like a test, "
+            "not confirmed; check it actually covers this)",
         "conditional.add_test": "- [ ] Add a regression test first",
         "conditional.signoff": "- [ ] Get sign-off from someone who knows this area",
 
@@ -83,7 +85,8 @@ _STRINGS = {
             "safe to remove.",
         "safe.evidence_header": "Evidence:",
         "safe.introducing_commit": "- introducing commit: {sha}",
-        "safe.guarded_by": "- guarded by: {guard}",
+        "safe.guarded_by": "- possibly guarded by (name looks like a test, not "
+            "confirmed): {guard}",
         "safe.no_test": "- no test depends on it",
 
         "unknown.title": "Question about {path}:{start}",
@@ -144,7 +147,8 @@ _STRINGS = {
             "않습니다. 이 trace에는 이 결과물의 근거로 삼을 대상이 없습니다.",
 
         "danger.keep": "{marker}유지: {subject} ({day}, {sha})",
-        "danger.guard": "{marker}삭제하기 전에 {guard}가 통과하는지 확인하세요.",
+        "danger.guard": "{marker}삭제하기 전에 {guard}(이름상 테스트로 보이나 확인되지 "
+            "않음)가 통과하는지 확인하세요.",
         "danger.warning": "{marker}주의: 이 코드를 지켜주는 테스트가 없습니다. 손대기 전에 "
             "테스트를 추가하세요.",
         "danger.no_marker": "이 파일 종류에 해당하는 주석 기호를 알 수 없습니다. 위 각 줄 "
@@ -154,7 +158,8 @@ _STRINGS = {
         "conditional.condition": "- [ ] 이 코드가 필요했던 조건이 더 이상 유효하지 "
             "않은지 확인",
         "conditional.introduced": "- [ ] 도입 커밋: {sha} ({subject})",
-        "conditional.run_guard": "- [ ] {guard} 실행해서 확인",
+        "conditional.run_guard": "- [ ] {guard} 실행해서 확인 (이름상 테스트로 보이나 "
+            "확인되지 않음, 실제로 이 코드를 검증하는지 확인 필요)",
         "conditional.add_test": "- [ ] 회귀 테스트를 먼저 추가",
         "conditional.signoff": "- [ ] 이 영역을 잘 아는 사람에게 확인받기",
 
@@ -164,7 +169,7 @@ _STRINGS = {
             "안전합니다.",
         "safe.evidence_header": "근거:",
         "safe.introducing_commit": "- 도입 커밋: {sha}",
-        "safe.guarded_by": "- 관련 테스트: {guard}",
+        "safe.guarded_by": "- 이름상 관련 테스트로 보이는 파일(확인되지 않음): {guard}",
         "safe.no_test": "- 이 코드에 의존하는 테스트 없음",
 
         "unknown.title": "{path}:{start} 관련 질문",

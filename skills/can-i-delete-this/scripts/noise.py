@@ -69,13 +69,22 @@ _GENERATED_HINTS = ("_pb2.py", ".pb.go", "_generated.", ".gen.", "generated/",
 # is_test_path below.
 _TEST_DIR_NAMES = {"tests", "test", "spec", "specs", "__tests__"}
 
-# A camelCase "Test" word boundary (lowercase/digit/underscore immediately
-# followed by capital T then lowercase "est"), the Android/JVM convention
-# for both directories ("androidTest/") and class-per-file names
-# ("FooTest.kt"). Case-sensitive on purpose: "contest" and "latest" end in
-# the same four letters but never capitalize the T, so this pattern leaves
-# them alone (see is_test_path's docstring).
-_CAMEL_TEST_SUFFIX = re.compile(r"[a-z0-9_]Test$")
+# A literal, capitalized "Test" ending, the Android/JVM convention for
+# both directories ("androidTest/") and class-per-file names
+# ("FooTest.kt"). Case sensitivity alone does the whole job: "contest",
+# "latest", "protest" and "Manifest" all end in the same four letters but
+# never capitalize the T, so they never match this pattern regardless of
+# what comes before it. An earlier version of this pattern also required
+# the character just before "Test" to be lowercase, a digit or an
+# underscore (i.e. `[a-z0-9_]Test$`), on the theory that a real word
+# boundary looks like "fooTest". That extra condition rejected exactly the
+# two-letter-acronym test names real JVM/Android code actually uses --
+# "IOTest.java", "HTTPTest.kt", "JSONTest.java", "TTest.java" -- because
+# the letter immediately before "Test" there is itself a capital, so it
+# never matched `[a-z0-9_]`. See is_test_path's docstring for why that
+# false-negative direction, not the false-positive one, is the cost worth
+# avoiding.
+_CAMEL_TEST_SUFFIX = re.compile(r"Test$")
 
 # Quote characters unified by every formatter that rewrites tokens rather
 # than whitespace, which is the class `git blame -w` cannot see through
@@ -110,17 +119,32 @@ def is_test_path(path):
       - filename stems starting with "test_" or ending with "_test"/"_spec"
       - a ".test." or ".spec." segment before the final extension
         (e.g. "foo.test.js", "foo.spec.ts")
-      - a directory or filename stem ending in a camelCase "Test" suffix
-        immediately after a lowercase letter, digit or underscore (e.g.
-        "androidTest/", "FooTest.kt"), the Android/JVM convention where the
+      - a directory or filename stem ending in the literal, capitalized
+        word "Test" (e.g. "androidTest/", "FooTest.kt", "IOTest.java",
+        "TTest.java", bare "Test.kt"), the Android/JVM convention where the
         word boundary is a capital letter rather than a separator
 
     Deliberately does NOT match a bare "test"/"spec" substring anywhere in the
     path, which would misclassify files like "latest.py", "contest.py",
-    "inspector.py", "specification.md" or "respect.go" as tests: the
-    camelCase check above is case-sensitive specifically so "contest" (no
-    capital T) stays out while "FooTest" (a lowercase letter immediately
-    followed by capital T) is recognised.
+    "inspector.py", "specification.md" or "respect.go" as tests: the "Test"
+    check above is case-sensitive specifically so "contest", "latest",
+    "protest" and "Manifest" -- which end in the same four letters but
+    never capitalize the T -- stay false.
+
+    That check carries no other condition on what precedes "Test": it
+    matches "ABTest.kt" (an A/B-test feature class, not a test suite) just
+    as readily as "FooTest.kt". That is an accepted, deliberate cost, not
+    an oversight -- see _CAMEL_TEST_SUFFIX's own comment for the false
+    positives an earlier, narrower version of this pattern let through
+    instead. The asymmetry this module is built on (see the module
+    docstring) is why the trade is made in this direction: a false
+    positive here costs a reader one extra file open to see that
+    "ABTest.kt" is not actually a test; a false negative silently drops a
+    real co-changed test out of trace.py's tier-0 priority (see
+    trace._co_changed_priority) and tells an agent "no test guards this"
+    about a target a test genuinely does guard. The first costs a minute;
+    the second is the wrong-direction, unrecoverable failure this whole
+    module exists to avoid.
 
     This lives here, in the one module with no git and no filesystem access,
     rather than in artifacts.py (where it originated) or trace.py, because
