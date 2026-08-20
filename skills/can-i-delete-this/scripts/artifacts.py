@@ -21,11 +21,11 @@ language's marker by hand.
 
 import argparse
 import json
-import posixpath
 import shutil
 import subprocess
 
 import citation
+import noise
 import scanner
 
 CLIPBOARD_TOOLS = (
@@ -35,9 +35,6 @@ CLIPBOARD_TOOLS = (
     ("xsel", ["xsel", "--clipboard", "--input"]),
     ("clip", ["clip"]),
 )
-
-# Directory names that mark everything under them as test code.
-_TEST_DIR_NAMES = {"tests", "test", "spec", "specs", "__tests__"}
 
 # Every piece of text this module writes around the data it renders, keyed
 # by language then by a dotted string key. This is a plain data lookup, not
@@ -67,16 +64,32 @@ _STRINGS = {
             "all). This trace has nothing to attribute this artifact to.",
 
         "danger.keep": "{marker}KEEP: {subject} ({day}, {sha})",
-        "danger.guard": "{marker}Before deleting, confirm {guard} still passes.",
+        "danger.guard": "{marker}Before deleting, confirm {guard} (its name looks like a "
+            "test, not confirmed) still passes.",
+        "danger.guard_plural_intro": "{marker}Before deleting, confirm these still pass "
+            "(names look like tests, not confirmed):",
+        "danger.guard_unverified": "{marker}If it is not a test, no test guards this: "
+            "add one before touching it.",
+        "danger.guard_unverified_plural": "{marker}If none of these are tests, no test "
+            "guards this: add one before touching it.",
         "danger.warning": "{marker}WARNING: no test guards this. Add one before touching it.",
         "danger.no_marker": "No comment marker is known for this file type; "
             "prefix each line above with your language's own comment marker.",
+        "guard.and_more": "and {count} more",
+        "guard.and_at_least_more": "and at least {count} more",
+        "guard.list_capped": "and possibly more: {listed} of {total} files "
+            "from this commit are listed",
+        "guard.list_capped_unknown": "and possibly more: this trace does not "
+            "record how many files this commit really touched",
 
         "conditional.title": "Deletion checklist for {path}:{start}",
         "conditional.condition": "- [ ] Confirm the condition that made this "
             "necessary no longer holds",
         "conditional.introduced": "- [ ] Introduced in {sha} ({subject})",
-        "conditional.run_guard": "- [ ] Run {guard}",
+        "conditional.run_guard": "- [ ] Run {guard} (its name looks like a test, "
+            "not confirmed; check it actually covers this)",
+        "conditional.run_guard_plural": "- [ ] Run {guard} (these names look like "
+            "tests, not confirmed; check they actually cover this)",
         "conditional.add_test": "- [ ] Add a regression test first",
         "conditional.signoff": "- [ ] Get sign-off from someone who knows this area",
 
@@ -86,7 +99,8 @@ _STRINGS = {
             "safe to remove.",
         "safe.evidence_header": "Evidence:",
         "safe.introducing_commit": "- introducing commit: {sha}",
-        "safe.guarded_by": "- guarded by: {guard}",
+        "safe.guarded_by": "- possibly guarded by (name looks like a test, not "
+            "confirmed): {guard}",
         "safe.no_test": "- no test depends on it",
 
         "unknown.title": "Question about {path}:{start}",
@@ -147,17 +161,33 @@ _STRINGS = {
             "않습니다. 이 trace에는 이 결과물의 근거로 삼을 대상이 없습니다.",
 
         "danger.keep": "{marker}유지: {subject} ({day}, {sha})",
-        "danger.guard": "{marker}삭제하기 전에 {guard}가 통과하는지 확인하세요.",
+        "danger.guard": "{marker}삭제하기 전에 {guard}(이름상 테스트로 보이나 확인되지 "
+            "않음)가 통과하는지 확인하세요.",
+        "danger.guard_plural_intro": "{marker}삭제하기 전에 아래 파일들이 모두 통과하는지 "
+            "확인하세요(이름상 테스트로 보이나 확인되지 않음):",
+        "danger.guard_unverified": "{marker}테스트가 아니라면 이 코드를 지켜주는 테스트가 "
+            "없는 것이니, 손대기 전에 추가하세요.",
+        "danger.guard_unverified_plural": "{marker}이 중 테스트가 하나도 없다면 이 코드를 "
+            "지켜주는 테스트가 없는 것이니, 손대기 전에 추가하세요.",
         "danger.warning": "{marker}주의: 이 코드를 지켜주는 테스트가 없습니다. 손대기 전에 "
             "테스트를 추가하세요.",
         "danger.no_marker": "이 파일 종류에 해당하는 주석 기호를 알 수 없습니다. 위 각 줄 "
             "앞에 사용하는 언어의 주석 기호를 직접 붙이세요.",
+        "guard.and_more": "외 {count}개 더",
+        "guard.and_at_least_more": "외 최소 {count}개 더",
+        "guard.list_capped": "더 있을 수 있음: 이 커밋이 건드린 파일 {total}개 중 "
+            "{listed}개만 나열됨",
+        "guard.list_capped_unknown": "더 있을 수 있음: 이 커밋이 실제로 몇 개 파일을 "
+            "건드렸는지 이 trace에는 기록되어 있지 않음",
 
         "conditional.title": "{path}:{start} 삭제 체크리스트:",
         "conditional.condition": "- [ ] 이 코드가 필요했던 조건이 더 이상 유효하지 "
             "않은지 확인",
         "conditional.introduced": "- [ ] 도입 커밋: {sha} ({subject})",
-        "conditional.run_guard": "- [ ] {guard} 실행해서 확인",
+        "conditional.run_guard": "- [ ] {guard} 실행해서 확인 (이름상 테스트로 보이나 "
+            "확인되지 않음, 실제로 이 코드를 검증하는지 확인 필요)",
+        "conditional.run_guard_plural": "- [ ] {guard} 실행해서 확인 (이름상 테스트로 "
+            "보이나 확인되지 않음, 실제로 이 코드를 검증하는지 확인 필요)",
         "conditional.add_test": "- [ ] 회귀 테스트를 먼저 추가",
         "conditional.signoff": "- [ ] 이 영역을 잘 아는 사람에게 확인받기",
 
@@ -167,7 +197,7 @@ _STRINGS = {
             "안전합니다.",
         "safe.evidence_header": "근거:",
         "safe.introducing_commit": "- 도입 커밋: {sha}",
-        "safe.guarded_by": "- 관련 테스트: {guard}",
+        "safe.guarded_by": "- 이름상 관련 테스트로 보이는 파일(확인되지 않음): {guard}",
         "safe.no_test": "- 이 코드에 의존하는 테스트 없음",
 
         "unknown.title": "{path}:{start} 관련 질문",
@@ -346,39 +376,6 @@ def _not_introduction_text(grade, target, refs, *, lang="en"):
     ])
 
 
-def _is_test_path(path):
-    """Identify test files by filename/directory convention, not substring match.
-
-    Recognises:
-      - any directory segment named tests/test/spec/specs/__tests__
-      - filename stems starting with "test_" or ending with "_test"/"_spec"
-      - a ".test." or ".spec." segment before the final extension
-        (e.g. "foo.test.js", "foo.spec.ts")
-
-    Deliberately does NOT match a bare "test"/"spec" substring anywhere in the
-    path, which would misclassify files like "latest.py", "contest.py",
-    "inspector.py", "specification.md" or "respect.go" as tests.
-    """
-    if not path:
-        return False
-
-    dirname, filename = posixpath.split(path)
-    dir_parts = [p for p in dirname.split("/") if p]
-    if any(part.lower() in _TEST_DIR_NAMES for part in dir_parts):
-        return True
-
-    segments = filename.lower().split(".")
-    stem = segments[0]
-    middle = segments[1:-1]  # segments between the stem and the final extension
-    if "test" in middle or "spec" in middle:
-        return True
-
-    if stem.startswith("test_") or stem.endswith("_test") or stem.endswith("_spec"):
-        return True
-
-    return False
-
-
 def _tests(trace_data, real_sha=None):
     """Co-changed test paths, restricted to the commit the artifact is about.
 
@@ -390,8 +387,164 @@ def _tests(trace_data, real_sha=None):
     nothing is attributed to anything, so no entries match.
     """
     return [c["path"] for c in trace_data.get("co_changed", [])
-            if _is_test_path(c["path"]) and real_sha is not None
+            if noise.is_test_path(c["path"]) and real_sha is not None
             and c.get("sha") == real_sha]
+
+
+_MAX_NAMED_GUARDS = 3
+
+
+def _co_changed_counts(trace_data, real_sha):
+    """(total, present): the true count of every path `real_sha` touched
+    (`co_changed_totals[real_sha]`, recorded by trace.py before it ranks
+    and truncates) and how many of that sha's entries survived into
+    `trace_data["co_changed"]`.
+
+    Returns `(None, None)` when the total cannot be read with confidence:
+    `real_sha` is None, an older trace with no `co_changed_totals` key at
+    all, a value of the wrong shape, no entry for this sha, or a bool (a
+    bool is an int subclass in Python, so `isinstance(True, int)` is True;
+    render.py's own hint rejects the same case on the same field, and
+    reading a bool as a path count would be the same silent-miscount
+    failure).
+    """
+    if real_sha is None:
+        return None, None
+    totals = trace_data.get("co_changed_totals")
+    if not isinstance(totals, dict):
+        return None, None
+    total = totals.get(real_sha)
+    if not isinstance(total, int) or isinstance(total, bool):
+        return None, None
+    present = sum(1 for c in trace_data.get("co_changed", [])
+                  if c.get("sha") == real_sha)
+    return total, present
+
+
+def _co_changed_capped(total, present):
+    """Whether `real_sha`'s `co_changed` entries were already cut down by
+    trace.py's per-commit cap before `_tests()` ever filtered them, given
+    the `(total, present)` pair `_co_changed_counts` returns.
+
+    When the two agree, nothing was cut for this sha and `_tests()` saw
+    every test-looking path it touched, so a remainder computed from
+    `tests` is exact. When they disagree, the cap may have dropped
+    test-looking paths before `_tests()`'s filter ever ran, so any count
+    built from `tests` alone is a lower bound, not a total.
+
+    `total is None` (see `_co_changed_counts`) means the total is
+    unrecoverable, and this returns True for that case too. Folding
+    "unknown" into "capped" is the conservative direction: it can only
+    make a caller say "at least" (or disclose a cut with no numbers)
+    where the truth happened to be exact, never the reverse -- claiming
+    exactness the data cannot support is the failure this exists to avoid.
+    """
+    return total is None or total > present
+
+
+def _and_more_text(extra, capped, lang):
+    """The tail naming how many named-but-unshown tests remain.
+
+    `extra` is always `len(tests) - len(shown)` (see `_guard_text` and
+    `_guard_lines`), and `tests` itself comes from the already-capped
+    `co_changed` list (see `_tests()`). That makes `extra` the exact
+    remainder of what `_tests()` saw, but only the true remainder of what
+    the commit actually touched when nothing was cut before `_tests()`
+    ran -- which is exactly what `capped` (see `_co_changed_capped`)
+    tracks. "and N more" is only honest when `capped` is False; otherwise
+    the real count could be higher than `extra`, so "and at least N more"
+    is what the data can support.
+    """
+    key = "guard.and_at_least_more" if capped else "guard.and_more"
+    return _t(lang, key, count=extra)
+
+
+def _guard_text(tests, capped, lang):
+    """Build the guard line's value, naming up to `_MAX_NAMED_GUARDS` of
+    `tests` and disclosing any remainder as a count instead of dropping it.
+
+    `tests` is in git's own path order (whatever `_tests()`/`co_changed`
+    returned), never reordered here. Naming only `tests[0]` (the previous
+    behavior) let a `Test$` false positive sitting before a genuine test
+    hide that genuine test from the reader entirely, and worse, let
+    danger.guard_unverified's caveat below read as though nothing else in
+    `tests` existed. Silently naming a subset (3 of 9, say) would repeat
+    the same mistake at a smaller scale, so anything left unnamed is
+    counted, not dropped -- the same disclose-the-cut stance render.py
+    takes for `co_changed` itself. See `_and_more_text` for why that count
+    itself needs "at least" when `capped` is True.
+
+    This is the comma-joined single-line form `conditional.run_guard` and
+    `safe.guarded_by` still use. A `danger` verdict naming more than one
+    guard uses `_guard_lines` instead; see `skeleton()`.
+
+    Returns `(guard, plural)`. `guard` is None when `tests` is empty.
+    `plural` is True whenever more than one path is being described, named
+    or only counted, so the caller can pick a grammatically matching
+    string for danger.guard_unverified/conditional.run_guard.
+    """
+    if not tests:
+        return None, False
+    shown = tests[:_MAX_NAMED_GUARDS]
+    extra = len(tests) - len(shown)
+    guard = ", ".join(shown)
+    if extra > 0:
+        guard = "{}, {}".format(guard, _and_more_text(extra, capped, lang))
+    return guard, len(tests) > 1
+
+
+def _guard_lines(tests, capped, total_changed, present_changed, lang):
+    """One test path per line, plus a trailing disclosure line when either
+    `tests` is cut to `_MAX_NAMED_GUARDS` or the cited commit's
+    `co_changed` list was cut before `_tests()` ever saw it.
+
+    This is the shape a `danger` verdict with more than one named guard
+    gets in `skeleton()`: a single sentence cannot carry a list, a count
+    and a caveat at once without either running past a linter's max line
+    length or losing one of the three (see this project's fix history for
+    why). `conditional.run_guard` and `safe.guarded_by` keep the
+    comma-joined form `_guard_text` returns instead -- those are checklist
+    and evidence lines, not lines `patch.py` inserts into source, so the
+    length pressure that drove this split does not apply to them.
+
+    `extra > 0` (more test-looking paths than `_MAX_NAMED_GUARDS` were
+    found) says so via `_and_more_text`, same as before. But a commit can
+    be capped (`capped` True) while every test-looking path `_tests()`
+    found still fits inside `_MAX_NAMED_GUARDS` -- `extra == 0` -- because
+    trace.py's cap acts on the whole `co_changed` list, not just the
+    test-looking subset of it: files this cap dropped before ranking ever
+    reached `_tests()`'s filter could include tests too, and `tests` alone
+    has no way to see them. Saying nothing there would be exactly the
+    silent cut this project's own disclose-the-cut rule exists to catch,
+    just at the boundary where `extra` happens to be 0 instead of
+    positive. So that case gets its own line, built from `total_changed`/
+    `present_changed` (`_co_changed_counts`'s pair for the cited sha)
+    rather than from `tests`, since `tests` is exactly the count that
+    cannot be trusted here. It never claims a test count -- the cut paths
+    are not known to be tests -- only that the underlying list was cut.
+    When even `total_changed` is unrecoverable (see `_co_changed_counts`),
+    there are no numbers to disclose, so the sentence says that instead of
+    fabricating a count.
+
+    A fully uncapped commit whose test-looking paths all fit unnamed gets
+    no extra line at all: a complete list must stay unlabelled, or every
+    ordinary danger verdict would carry a spurious caveat.
+
+    None of these lines carry the comment marker; the caller (`skeleton`)
+    adds it, the same as every other line in the danger branch.
+    """
+    shown = tests[:_MAX_NAMED_GUARDS]
+    extra = len(tests) - len(shown)
+    lines = list(shown)
+    if extra > 0:
+        lines.append(_and_more_text(extra, capped, lang))
+    elif capped:
+        if total_changed is None:
+            lines.append(_t(lang, "guard.list_capped_unknown"))
+        else:
+            lines.append(_t(lang, "guard.list_capped", listed=present_changed,
+                            total=total_changed))
+    return lines
 
 
 def skeleton(grade, trace_data, evidence=None, *, lang="en"):
@@ -442,8 +595,11 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
     raw_date = top.get("date")
     day = raw_date[:10] if isinstance(raw_date, str) and raw_date else _t(lang, "common.date_unknown")
 
-    tests = _tests(trace_data, raw_sha if isinstance(raw_sha, str) and raw_sha else None)
-    guard = tests[0] if tests else None
+    real_sha = raw_sha if isinstance(raw_sha, str) and raw_sha else None
+    tests = _tests(trace_data, real_sha)
+    total_changed, present_changed = _co_changed_counts(trace_data, real_sha)
+    capped = _co_changed_capped(total_changed, present_changed)
+    guard, guard_plural = _guard_text(tests, capped, lang)
 
     if grade == "danger":
         # patch.py turns this block into a diff that inserts it into the
@@ -470,7 +626,39 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
                     subject=subject or _t(lang, "common.reason_unknown"),
                     day=day, sha=sha)]
         if guard:
-            lines.append(_t(lang, "danger.guard", marker=marker_prefix, guard=guard))
+            # `guard` is a name match (noise.is_test_path), never a
+            # confirmed one -- see _tests()'s docstring. danger.guard says
+            # so, but stopping there would let a name-only match silently
+            # take the place of danger.warning's "no test guards this" for
+            # a reader who never opens `guard` to check: told to "confirm
+            # ChiSquareTest.java still passes", a reader who finds
+            # production code there has learned nothing about whether
+            # anything actually guards the target. danger.guard_unverified
+            # is the same warning danger.warning gives, conditioned on
+            # `guard` turning out not to be a real test, so that path is
+            # never silently dropped just because a name matched.
+            #
+            # More than one named guard cannot be carried by one sentence:
+            # a comma-joined list, a remainder count and a singular/plural
+            # caveat, all in one line, either loses one of the three or
+            # runs the line past a linter's max line length once real
+            # package paths are involved (this project's own fix history
+            # found both). So a `danger` verdict with more than one guard
+            # gets one path per line instead -- `danger.guard_plural_intro`
+            # followed by `_guard_lines`' output -- and only the
+            # single-guard case still uses the one-line `danger.guard`
+            # sentence below.
+            if guard_plural:
+                lines.append(_t(lang, "danger.guard_plural_intro", marker=marker_prefix))
+                guard_prefix = marker_prefix + "  "
+                for guard_line in _guard_lines(tests, capped, total_changed,
+                                                present_changed, lang):
+                    lines.append(guard_prefix + guard_line)
+            else:
+                lines.append(_t(lang, "danger.guard", marker=marker_prefix, guard=guard))
+            guard_key = "danger.guard_unverified_plural" if guard_plural \
+                else "danger.guard_unverified"
+            lines.append(_t(lang, guard_key, marker=marker_prefix))
         else:
             lines.append(_t(lang, "danger.warning", marker=marker_prefix))
         if marker is None:
@@ -478,8 +666,20 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
         return "\n".join(lines)
 
     if grade == "conditional":
-        guard_line = _t(lang, "conditional.run_guard", guard=guard) if guard \
-            else _t(lang, "conditional.add_test")
+        # Unlike the danger branch above, this stays one checklist item:
+        # a checkbox line is not inserted into source through patch.py, so
+        # the line-length pressure that split the danger branch into one
+        # path per line does not apply here (see this project's decision
+        # to keep the checklist and evidence forms as they were). `guard`
+        # can still name more than one path, so only the pronoun/verb
+        # needs to track that (`conditional.run_guard_plural`), same as
+        # `danger.guard_unverified_plural` above.
+        if guard:
+            run_guard_key = "conditional.run_guard_plural" if guard_plural \
+                else "conditional.run_guard"
+            guard_line = _t(lang, run_guard_key, guard=guard)
+        else:
+            guard_line = _t(lang, "conditional.add_test")
         return "\n".join([
             _t(lang, "conditional.title", path=target.get("path"), start=target.get("start")),
             _t(lang, "conditional.condition"),

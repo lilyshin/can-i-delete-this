@@ -106,6 +106,24 @@ class TestKeepMarkerOnGuardAndWarningLines(unittest.TestCase):
         self.assertIn("-- Before deleting", out)
         self.assertNotIn("// Before deleting", out)
 
+    def test_guard_unverified_line_also_carries_target_marker(self):
+        # danger.guard_unverified is a second line appended alongside
+        # danger.guard (see artifacts.py's "if guard:" branch); patch.py
+        # checks every line of the block, not just the first, before
+        # inserting it, so a marker-less second line would make the whole
+        # patch invalid the same way a stale "//" would. Checked on every
+        # line of the guarded skeleton, not just one, so a mutation that
+        # appends the new line via marker="" (or omits the kwarg) is
+        # caught regardless of which line it lands on.
+        out = artifacts.skeleton("danger", _guarded_trace("billing/fee.py"))
+        for line in out.splitlines():
+            self.assertTrue(line.startswith("# "), repr(line))
+
+    def test_guard_unverified_line_uses_dash_dash_for_sql(self):
+        out = artifacts.skeleton("danger", _guarded_trace("migrations/0001_fee.sql"))
+        for line in out.splitlines():
+            self.assertTrue(line.startswith("-- "), repr(line))
+
 
 class TestKeepMarkerIsLanguageIndependent(unittest.TestCase):
     """The comment marker is the target file's syntax, not chrome: it must
@@ -132,6 +150,19 @@ class TestKeepMarkerIsLanguageIndependent(unittest.TestCase):
         """
         en = artifacts.skeleton("danger", _trace("billing/fee.py"), lang="en")
         ko = artifacts.skeleton("danger", _trace("billing/fee.py"), lang="ko")
+        for line in en.splitlines() + ko.splitlines():
+            self.assertTrue(line.startswith("# "),
+                            "not prefixed with the target's marker: " + repr(line))
+
+    def test_en_and_ko_agree_on_marker_for_guarded_shape_too(self):
+        """Same check as the unguarded case above, but for the guarded
+        shape (danger.guard plus danger.guard_unverified): the unguarded
+        fixture only ever exercises the single-line danger.warning branch,
+        so it cannot catch a marker missing from either of the two lines
+        the guarded branch adds instead.
+        """
+        en = artifacts.skeleton("danger", _guarded_trace("billing/fee.py"), lang="en")
+        ko = artifacts.skeleton("danger", _guarded_trace("billing/fee.py"), lang="ko")
         for line in en.splitlines() + ko.splitlines():
             self.assertTrue(line.startswith("# "),
                             "not prefixed with the target's marker: " + repr(line))

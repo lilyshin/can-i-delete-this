@@ -864,7 +864,7 @@ def build_korean_paths(dest: str) -> dict:
     target file's own path never string-equals its escaped form, so
     self-exclusion (trace.py's `p != path` check) fails and the target
     shows up in its own co-changed list; the leading quote character
-    corrupts `posixpath.split`, so `artifacts._is_test_path` can no longer
+    corrupts `posixpath.split`, so `noise.is_test_path` can no longer
     recognize the (perfectly ordinary, ASCII) `tests/` directory segment
     once the rest of the path is non-ASCII; and render.py would show the
     raw escaped garbage to the user. This fixture reproduces all three in
@@ -879,7 +879,7 @@ def build_korean_paths(dest: str) -> dict:
     # Deliberately no English "test"/"spec" filename marker: recognition
     # here must come from the ASCII `tests/` directory segment alone, not
     # from a filename suffix, so the fixture actually exercises the
-    # directory-segment path in `artifacts._is_test_path` rather than
+    # directory-segment path in `noise.is_test_path` rather than
     # accidentally passing for an unrelated reason.
     test_file = test_dir / "결제_확인.py"
     test_file.write_text("def check_charge():\n    pass\n")
@@ -1518,4 +1518,165 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
                   "indent": "        "},
         "korean": {"path": "결제/수수료.py", "start": 6, "end": 6,
                     "indent": "        "},
+    }
+
+
+def build_co_changed_cap(dest: str, *, name: str = "co_changed_cap") -> dict:
+    """Two commits, for testing trace()'s co_changed cap and priority
+    ordering (noise.is_test_path first, then the target's own directory,
+    then everything else) against ground truth rather than against
+    "however many paths happen to exist".
+
+    `big_sha` changes the target file plus six other paths in one commit:
+    one test file (`tests/payment_test.py`, nowhere near the target's own
+    directory, so it can only rank first through is_test_path, not through
+    directory proximity), two files beside the target
+    (`billing/helper_one.py`, `billing/helper_two.py`), and three files in
+    an unrelated directory (`other/far_one.py`, `other/far_two.py`,
+    `other/far_three.py`) -- "far" meaning nothing here, deliberately, so a
+    cap that dropped the test file or ranked a far file ahead of a
+    same-directory one would have nothing plausible to justify it.
+
+    `base_sha` changes the target file plus exactly one other path
+    (`misc/base_helper.py`), fewer than any cap this fixture's tests use,
+    to prove a commit that changes fewer paths than the cap is carried
+    whole rather than clipped down to look like a capped one.
+
+    Both shas are meant to be passed to trace()'s `include_commits`
+    (a commit named that way is never noise-filtered and always kept, see
+    trace.py), so this fixture does not need to construct a scenario where
+    blame or pickaxe organically discovers either one; what the co_changed
+    cap and priority ordering do with each commit's changed paths is the
+    only thing under test.
+    """
+    repo = _init(dest, name)
+    target = repo / "billing" / "payment.py"
+    target.parent.mkdir(parents=True)
+    base_other = repo / "misc" / "base_helper.py"
+    base_other.parent.mkdir(parents=True)
+
+    target.write_text("def charge(order):\n    return order.total\n")
+    base_other.write_text("VALUE = 1\n")
+    base_sha = _commit(repo, "feat: add payment module", "2020-01-01T10:00:00")
+
+    test_file = repo / "tests" / "payment_test.py"
+    test_file.parent.mkdir(parents=True)
+    helper_one = repo / "billing" / "helper_one.py"
+    helper_two = repo / "billing" / "helper_two.py"
+    far_dir = repo / "other"
+    far_dir.mkdir(parents=True)
+    far_one = far_dir / "far_one.py"
+    far_two = far_dir / "far_two.py"
+    far_three = far_dir / "far_three.py"
+
+    target.write_text(
+        "def charge(order):\n"
+        "    if order.already_charged:\n"
+        "        return {'status': 'duplicate'}\n"
+        "    return order.total\n"
+    )
+    test_file.write_text("def test_charge():\n    pass\n")
+    helper_one.write_text("def helper_one():\n    pass\n")
+    helper_two.write_text("def helper_two():\n    pass\n")
+    far_one.write_text("X = 1\n")
+    far_two.write_text("X = 2\n")
+    far_three.write_text("X = 3\n")
+    big_sha = _commit(repo, "fix: guard duplicate charge", "2020-02-01T10:00:00")
+
+    return {
+        "repo": str(repo),
+        "path": "billing/payment.py",
+        "line": 2,
+        "base_sha": base_sha,
+        "big_sha": big_sha,
+        "test_path": "tests/payment_test.py",
+        "same_dir_paths": ["billing/helper_one.py", "billing/helper_two.py"],
+        "far_paths": ["other/far_one.py", "other/far_two.py", "other/far_three.py"],
+        "base_other_path": "misc/base_helper.py",
+        "big_total": 6,  # test + 2 same-dir + 3 far, target itself excluded
+        "base_total": 1,  # base_other, target itself excluded
+    }
+
+
+def build_guard_name_collision(dest: str, *, name: str = "guard_name_collision") -> dict:
+    """One commit that co-changes a `Test$` false positive ahead of a genuine
+    test, alphabetically, alongside the target.
+
+    Regression fixture for the final-review I1 finding: `noise.is_test_path`
+    recognizes both `billing/ABTest.kt` (an A/B-experiment flag holder, not a
+    test suite -- see that function's docstring for why the false positive
+    is an accepted cost) and `tests/payment_test.py` (a genuine test) as
+    test-looking paths. Git's own path order is alphabetical, so
+    `ABTest.kt` sorts before `payment.py` sorts before `tests/...`, meaning
+    `ABTest.kt` is first in `co_changed` and a guard line that only ever
+    named the first match would name the false positive and never the real
+    test that actually guards the target.
+    """
+    repo = _init(dest, name)
+    billing = repo / "billing"
+    billing.mkdir(parents=True)
+    tests_dir = repo / "tests"
+    tests_dir.mkdir(parents=True)
+
+    false_positive = billing / "ABTest.kt"
+    target = billing / "payment.py"
+    test_file = tests_dir / "payment_test.py"
+
+    false_positive.write_text("// A/B experiment flag holder, NOT a test suite\n")
+    target.write_text("def charge(order):\n    return order.total\n")
+    test_file.write_text("def test_charge_is_idempotent():\n    assert True\n")
+    real_sha = _commit(repo, "hotfix: prevent double charge (#4127)", "2026-08-20T09:00:00")
+
+    return {
+        "repo": str(repo),
+        "path": "billing/payment.py",
+        "line": 1,
+        "real_sha": real_sha,
+        "false_positive_path": "billing/ABTest.kt",
+        "test_path": "tests/payment_test.py",
+    }
+
+
+def build_guard_capped_test_paths(dest: str, *, name: str = "guard_capped_test_paths",
+                                   n: int = 30) -> dict:
+    """One commit touching the target plus `n` test-looking paths
+    (`t/case_01_test.py` .. `t/case_{n}_test.py`), all sorting ahead of the
+    target alphabetically and all recognized by `noise.is_test_path`.
+
+    Regression fixture for final-rereview's N1: when `trace()`'s
+    `max_co_changed` cap (passed by the caller, not this builder) is
+    smaller than `n`, `co_changed` keeps only the top `max_co_changed` of
+    these -- co-changed tests rank first in `_co_changed_priority`, so
+    they fill the cap before any non-test path would -- while
+    `co_changed_totals` still records the true count of every path this
+    commit touched. `artifacts._guard_text`/`_guard_lines` must read that
+    disclosed total (via `_co_changed_capped`) rather than trust
+    `co_changed`'s already-capped length: the "and N more" tail describes
+    a set this fixture makes far larger than what the cap lets through.
+    """
+    repo = _init(dest, name)
+    target = repo / "app" / "service.py"
+    target.parent.mkdir(parents=True)
+    t_dir = repo / "t"
+    t_dir.mkdir(parents=True)
+
+    target.write_text("def charge(order):\n    return order.total\n")
+    for i in range(1, n + 1):
+        (t_dir / "case_{:02d}_test.py".format(i)).write_text(
+            "def test_case_{:02d}():\n    assert True\n".format(i))
+    target.write_text(
+        "def charge(order):\n"
+        "    if order.already_charged:\n"
+        "        return {'status': 'duplicate'}\n"
+        "    return order.total\n"
+    )
+    sha = _commit(repo, "hotfix: prevent double charge (#4127)", "2026-08-20T09:00:00")
+
+    return {
+        "repo": str(repo),
+        "path": "app/service.py",
+        "line": 2,
+        "sha": sha,
+        "test_paths": ["t/case_{:02d}_test.py".format(i) for i in range(1, n + 1)],
+        "total_changed": n,  # test paths only, target itself excluded
     }

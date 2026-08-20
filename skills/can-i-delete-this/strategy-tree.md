@@ -159,9 +159,13 @@ Commit subjects are usually useless (`fix bug`, PR-title squashes). In order
 of reliability:
 
 1. **Tests added in the same commit.** Check `co_changed` for anything
-   `artifacts.py`'s test-path convention would recognize (a `tests/`
-   directory, a `test_`/`_test`/`_spec` filename, or a `.test.`/`.spec.`
-   segment). A test added alongside the fix tells you what it guards against
+   `noise.is_test_path` would recognize (a `tests/`, `test/`, `spec/`,
+   `specs/` or `__tests__/` directory, a `test_`/`_test`/`_spec` filename,
+   a `.test.`/`.spec.` segment, or a directory or filename stem ending in
+   the capitalized word `Test`, the Android/JVM convention -- e.g.
+   `androidTest/`, `FooTest.kt`; a directory match sweeps every path
+   beneath it, not just that one entry). A test
+   added alongside the fix tells you what it guards against
    better than any prose. If you find one, it is `role: "guard"` evidence
    (`scripts/verdict.py`'s `EVIDENCE_ROLES`); if you deliberately looked and
    found none, that absence is worth recording too, since a `guard` count

@@ -6,6 +6,7 @@ reading SKILL.md decides what the evidence means.
 
 import argparse
 import json
+import posixpath
 import re
 import sys
 
@@ -76,6 +77,25 @@ _ACTIVITY_WINDOW = "1 year ago"
 # `body_truncated`, since an agent that believes it read the whole message
 # would stop looking.
 _BODY_LIMIT = 600
+
+# How many co-changed paths trace() keeps per introduction candidate. A
+# commit touching hundreds of files (a vendor bump, a monorepo-wide rename)
+# would otherwise dump its entire file list into co_changed and dominate the
+# whole JSON payload for one candidate's worth of evidence; measured against
+# a real repository, a single such commit made co_changed the largest field
+# in the trace by a wide margin. What survives the cut is picked, not
+# truncated blindly: co_changed_totals in trace()'s return records the true
+# per-commit count so the cut is disclosed rather than made to look like a
+# complete list.
+#
+# 20, not 5: measured against a real 200-candidate trace, a cap of 5
+# truncated 124 of the 200 candidate commits (62%); a cap of 20 truncates
+# only 34 (17%). The per-commit path-count distribution behind that
+# (5-or-fewer: 76 commits, 6-20: 90, 21-100: 31, over 100: 3) shows most
+# commits' own co-changes fit in 20 without help from the priority
+# ordering at all, so 20 keeps far more commits whole while still bounding
+# the pathological ones.
+CO_CHANGED_PER_COMMIT = 20
 
 
 def _body_fields(commit):
@@ -362,8 +382,55 @@ def _compute_activity(repo, path, line_history_shas, cache):
     }
 
 
+def _co_changed_priority(co_changed_path, target_dirname):
+    """Rank key for one commit's co-changed paths, best-first.
+
+    Test paths (noise.is_test_path) outrank everything: a co-changed test is
+    the strongest available signal of what guards the target, and must not
+    be pushed out of the cap by an unrelated file just because that file
+    happened to be touched too. Paths in the target's own directory outrank
+    the rest next, on the theory that a neighbor changed in the same commit
+    is more likely to be related to the target than something in a distant
+    part of the tree. Everything else shares the lowest rank.
+
+    Returns an int, not a bool, because there are three tiers, not two.
+    `sorted` is stable, so paths tying on this key keep the relative order
+    git itself reported them in; this function only ever reorders across
+    tiers, never within one, so it cannot manufacture an ordering fact git
+    did not give it.
+
+    `posixpath.dirname`, not `os.path.dirname`: every path here (both
+    `co_changed_path` and `target_dirname`) is a path git reported, and git
+    always reports paths POSIX-style, forward slashes only, regardless of
+    the OS this runs on. `os.path.dirname` would be `ntpath.dirname` on
+    Windows, which happens to also split on `/` so the two never actually
+    disagreed in practice, but `posixpath` says why on its face instead of
+    relying on that coincidence, matching noise.is_test_path's own
+    `posixpath.split` and every other path-shaped comparison in trace().
+    """
+    if noise.is_test_path(co_changed_path):
+        return 0
+    if posixpath.dirname(co_changed_path) == target_dirname:
+        return 1
+    return 2
+
+
 def trace(repo, path, start, end, *, max_commits=5000, since=None,
-          max_candidates=200, include_commits=None):
+          max_candidates=200, include_commits=None,
+          max_co_changed=CO_CHANGED_PER_COMMIT):
+    # Normalized once, at the door, so a caller-supplied "./billing/x.py"
+    # behaves identically to the bare "billing/x.py" for everything below:
+    # gitq.changed_paths never returns a leading "./" (git doesn't emit
+    # one), so an un-normalized path would fail the `p != path`
+    # self-exclusion later in this function (letting the target sneak into
+    # its own co_changed and eat a cap slot a real co-changed path should
+    # have had) and would never equal the same-directory tier's
+    # target_dirname ("./billing" from os.path.dirname("./billing/x.py")
+    # never equals git's own "billing"), silently collapsing that tier to
+    # dead code for the rest of this call. posixpath.normpath, not
+    # os.path.normpath, for the same POSIX-paths-from-git reason
+    # _co_changed_priority's docstring gives.
+    path = posixpath.normpath(path)
     notes = []
     cache = _ScoreCache(path)
     blame_candidates = []
@@ -537,15 +604,29 @@ def trace(repo, path, start, end, *, max_commits=5000, since=None,
     # So gather co-changes across every introduction candidate, tagging each
     # entry with the sha it came from; render.py and artifacts.py can then
     # filter down to the sha the verdict actually cites as real.
+    #
+    # A commit can touch far more paths than are worth carrying (a vendor
+    # bump, a monorepo-wide rename), so only the top `max_co_changed` of
+    # each commit's paths survive into `co_changed`, ranked by
+    # `_co_changed_priority` (tests first, then the target's own directory,
+    # then everything else) and otherwise left in git's own order. The true
+    # per-commit count -- before that cut -- is recorded in
+    # `co_changed_totals`, keyed by sha, so a cut is disclosed rather than
+    # made to look like a complete list.
     co_changed = []
+    co_changed_totals = {}
     seen_co_changed = set()
+    target_dirname = posixpath.dirname(path)
     for cand in candidates:
-        for p in gitq.changed_paths(repo, cand["sha"]):
-            if p != path:
-                key = (cand["sha"], p)
-                if key not in seen_co_changed:
-                    seen_co_changed.add(key)
-                    co_changed.append({"path": p, "sha": cand["sha"]})
+        sha = cand["sha"]
+        changed = [p for p in gitq.changed_paths(repo, sha) if p != path]
+        co_changed_totals[sha] = len(changed)
+        ranked = sorted(changed, key=lambda p: _co_changed_priority(p, target_dirname))
+        for p in ranked[:max_co_changed]:
+            key = (sha, p)
+            if key not in seen_co_changed:
+                seen_co_changed.add(key)
+                co_changed.append({"path": p, "sha": sha})
 
     total = len(gitq.run_git(repo, [
         "log", "--format=%H", "--max-count={}".format(max_commits + 1),
@@ -566,13 +647,15 @@ def trace(repo, path, start, end, *, max_commits=5000, since=None,
         "introduction_candidates": candidates,
         "revert_chain": revert_chain,
         "co_changed": co_changed,
+        "co_changed_totals": co_changed_totals,
         "snippet": snippet,
         "activity": activity,
         "commands": commands,
         "limits": {"max_commits": max_commits, "since": since,
                    "truncated": total > max_commits,
                    "max_candidates": max_candidates,
-                   "candidate_cap_reached": cap_state["hit"]},
+                   "candidate_cap_reached": cap_state["hit"],
+                   "co_changed_per_commit": max_co_changed},
         "notes": notes,
     }
 
@@ -595,6 +678,23 @@ def _parse_lines(spec):
     return start, end
 
 
+def _at_least_one(raw):
+    """An argparse type for `--max-co-changed`, mirroring scan.py's
+    `_at_least_one` for `--min-lines`.
+
+    A cap below 1 is not a request the ranking loop can honor: `ranked[:n]`
+    for `n <= 0` silently keeps zero or (for a negative `n`) drops paths
+    off the *end* of the ranked list instead of capping it, which is the
+    opposite of a cap. Rejecting it here keeps that a usage error with a
+    readable message instead of a quietly wrong result.
+    """
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError(
+            "must be 1 or greater, got {}".format(value))
+    return value
+
+
 def main():
     ap = argparse.ArgumentParser(description="Trace why a line of code exists.")
     ap.add_argument("--repo", required=True)
@@ -604,6 +704,10 @@ def main():
     ap.add_argument("--since", default=None,
                      help="e.g. '3 years ago'; unset means no time bound")
     ap.add_argument("--max-candidates", type=int, default=200)
+    ap.add_argument("--max-co-changed", type=_at_least_one, default=CO_CHANGED_PER_COMMIT,
+                     help="cap on co_changed paths kept per introduction "
+                          "candidate; the true per-commit count is still "
+                          "recorded in co_changed_totals")
     ap.add_argument(
         "--include-commit", action="append", dest="include_commits",
         default=None, metavar="SHA",
@@ -632,6 +736,7 @@ def main():
             max_commits=args.max_commits, since=args.since,
             max_candidates=args.max_candidates,
             include_commits=args.include_commits,
+            max_co_changed=args.max_co_changed,
         )
     except gitq.GitWriteAttempt:
         raise

@@ -140,6 +140,9 @@ _STRINGS = {
         "legend.revert": "part of a revert/reapply chain",
 
         "hint.co_changed": "Also touched in the introducing commit: {paths}",
+        "hint.co_changed_capped": "Also touched in the introducing commit "
+            "({shown} of {total} shown, capped per commit; rerun with "
+            "--max-co-changed to see more): {paths}",
         "chrome.no_history": "No history found.",
         "chrome.none": "none",
         "chrome.line_suffix": "line {line_range}",
@@ -218,6 +221,9 @@ _STRINGS = {
         "legend.revert": "revert/reapply 체인의 일부",
 
         "hint.co_changed": "도입 커밋에서 함께 변경된 파일: {paths}",
+        "hint.co_changed_capped": "도입 커밋에서 함께 변경된 파일 (커밋당 상한으로 "
+            "총 {total}개 중 {shown}개만 표시; 더 보려면 --max-co-changed로 "
+            "다시 실행): {paths}",
         "chrome.no_history": "히스토리를 찾지 못했습니다.",
         "chrome.none": "없음",
         "chrome.line_suffix": "{line_range}번째 줄",
@@ -1175,6 +1181,21 @@ def render(trace_data, verdict_data, *, lang="en"):
     # real; only show the entries whose sha is the one this page just
     # labeled real. Rendered only when non-empty so an empty list does not
     # read as "no coverage" noise.
+    #
+    # trace.py's CO_CHANGED_PER_COMMIT cap means the entries here can be
+    # fewer than the commit actually touched; co_changed_totals carries the
+    # true per-commit count so that cut is disclosed rather than left to
+    # look like a complete list (see this project's rule 3). Old trace
+    # JSON, from before that field existed, has no co_changed_totals key at
+    # all, so its absence -- or a value of the wrong shape -- must fall
+    # back to the plain sentence, never crash. And a commit that was never
+    # capped (its total equals what is shown) must render that same plain
+    # sentence too: disclosing a cut that did not happen would make a
+    # complete list look partial, the mirror image of the problem this cap
+    # exists to fix.
+    co_changed_totals = trace_data.get("co_changed_totals")
+    if not isinstance(co_changed_totals, dict):
+        co_changed_totals = {}
     co_changed_html = ""
     co_changed = [item for item in trace_data.get("co_changed", [])
                   if item.get("sha") in real_shas]
@@ -1183,8 +1204,32 @@ def render(trace_data, verdict_data, *, lang="en"):
             "<code>{}</code>".format(_e(item.get("path", "")))
             for item in co_changed
         )
-        co_changed_html = '<p class="hint">{}</p>'.format(
-            _t(lang, "hint.co_changed", paths=co_changed_paths))
+        shown_by_sha = {}
+        for item in co_changed:
+            sha = item.get("sha")
+            shown_by_sha[sha] = shown_by_sha.get(sha, 0) + 1
+        total_shown = len(co_changed)
+        total_true = 0
+        totals_known = True
+        for sha in shown_by_sha:
+            total = co_changed_totals.get(sha)
+            # bool is an int subclass in Python, so isinstance(True, int) is
+            # True; without the extra bool check a {sha: True} total (never
+            # written by trace.py, but not impossible in a hand-edited or
+            # third-party trace) would be silently read as a path count of
+            # 1, hiding a real cut. patch.py's _int_or_none rejects bools
+            # for the same reason; see that function's own comment.
+            if not isinstance(total, int) or isinstance(total, bool):
+                totals_known = False
+                break
+            total_true += total
+        if totals_known and total_true > total_shown:
+            co_changed_html = '<p class="hint">{}</p>'.format(_t(
+                lang, "hint.co_changed_capped",
+                shown=total_shown, total=total_true, paths=co_changed_paths))
+        else:
+            co_changed_html = '<p class="hint">{}</p>'.format(
+                _t(lang, "hint.co_changed", paths=co_changed_paths))
 
     evidence = "".join(
         "<li><code>{type}</code> <code>{ref}</code>{note}</li>".format(

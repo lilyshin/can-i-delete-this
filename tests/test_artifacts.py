@@ -122,6 +122,29 @@ class TestEmptyTrace(unittest.TestCase):
         self.assertNotIn("Search was limited", out)
 
 
+class TestDangerGuardUnverified(unittest.TestCase):
+    """A guard match is a filename convention (noise.is_test_path), never
+    verified to actually be a test -- see the comment above this branch in
+    artifacts.py. danger.guard alone would let a name-only match silently
+    stand in for danger.warning's "no test guards this" caveat;
+    danger.guard_unverified is the line that keeps that caveat alive even
+    when a guard is found.
+    """
+
+    def test_name_only_guard_emits_both_the_guard_and_unverified_lines(self):
+        out = artifacts.skeleton("danger", TRACE)
+        self.assertIn("payment_test.py", out)
+        self.assertIn("Before deleting, confirm", out)
+        self.assertIn("If it is not a test, no test guards this", out)
+
+    def test_no_guard_emits_only_the_plain_warning(self):
+        out = artifacts.skeleton("danger", EMPTY_TRACE)
+        self.assertIn("WARNING: no test guards this. Add one before touching it.", out)
+        self.assertNotIn("If it is not a test", out)
+        guard_lines = [l for l in out.splitlines() if "no test guards this" in l]
+        self.assertEqual(len(guard_lines), 1)
+
+
 class TestClipboard(unittest.TestCase):
     def test_uses_first_available_tool(self):
         with mock.patch.object(artifacts.shutil, "which",

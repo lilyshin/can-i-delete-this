@@ -82,7 +82,11 @@ history size.
 3. **Always disclose what you did not search.** If `limits.truncated` or
    `limits.candidate_cap_reached` is true, say so in the user-facing summary
    and offer to rerun with a higher limit. The tool reports this to you; you
-   are the one who must pass it on.
+   are the one who must pass it on. The same goes for `co_changed`: it is
+   capped per commit (`limits.co_changed_per_commit`), and `co_changed_totals`
+   carries each cited commit's true count, so if the report's list is
+   shorter than that total, say so and offer to rerun with
+   `--max-co-changed`.
 4. **Never write to the user's files.** No comment injection, no PR creation.
    Produce text; the user decides.
 5. **Respond in the user's language.** This file is English; your output

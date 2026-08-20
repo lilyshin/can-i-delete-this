@@ -4,7 +4,7 @@ With git's default `core.quotepath=true`, listing changed paths for a
 commit that touches a non-ASCII filename returns octal-escaped garbage
 (e.g. `"\\352\\262\\260...".py`) instead of the real UTF-8 name. That
 breaks trace.py's self-exclusion check (`p != path`), breaks
-artifacts._is_test_path's `tests/` segment recognition, and would leak
+noise.is_test_path's `tests/` segment recognition, and would leak
 the escaped garbage straight into render.py's output. These tests build a
 Korean-filename fixture and pin the fixed behavior end to end.
 """
@@ -17,8 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "can-i-delete-this" / "scripts"))
 import make_fixture_repo
-import artifacts
 import gitq
+import noise
 import trace as tracer
 
 
@@ -61,17 +61,17 @@ class TestIsTestPathOnKoreanSegment(unittest.TestCase):
         # No English "test"/"spec" filename marker here on purpose: this
         # must be recognized via the ASCII `tests/` directory segment
         # alone, not via a filename suffix.
-        self.assertTrue(artifacts._is_test_path("tests/결제_확인.py"))
+        self.assertTrue(noise.is_test_path("tests/결제_확인.py"))
 
     def test_does_not_recognize_the_octal_escaped_form(self):
         # Sanity check on the failure mode itself: once the whole path is
         # quoted and octal-escaped, the leading quote character corrupts
-        # the leading "tests" directory segment, so _is_test_path can no
+        # the leading "tests" directory segment, so is_test_path can no
         # longer recognize it. This documents why the fix belongs in
         # gitq.changed_paths (stop the escaping from happening at all),
-        # not in _is_test_path (try to see through it after the fact).
+        # not in is_test_path (try to see through it after the fact).
         escaped = '"tests/\\352\\262\\260\\354\\240\\234\\353\\252\\250\\353\\223\\210.py"'
-        self.assertFalse(artifacts._is_test_path(escaped))
+        self.assertFalse(noise.is_test_path(escaped))
 
 
 if __name__ == "__main__":

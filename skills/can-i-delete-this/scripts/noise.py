@@ -26,6 +26,7 @@ candidate list costs the agent one extra read, while discarding the real
 introducing commit is unrecoverable.
 """
 
+import posixpath
 import re
 from dataclasses import dataclass, field
 
@@ -64,6 +65,27 @@ _VENDOR_DIRS = ("vendor/", "third_party/", "thirdparty/", "node_modules/",
 _GENERATED_HINTS = ("_pb2.py", ".pb.go", "_generated.", ".gen.", "generated/",
                     ".g.dart", "_pb.js")
 
+# Directory names that mark everything under them as test code, used by
+# is_test_path below.
+_TEST_DIR_NAMES = {"tests", "test", "spec", "specs", "__tests__"}
+
+# A literal, capitalized "Test" ending, the Android/JVM convention for
+# both directories ("androidTest/") and class-per-file names
+# ("FooTest.kt"). Case sensitivity alone does the whole job: "contest",
+# "latest", "protest" and "Manifest" all end in the same four letters but
+# never capitalize the T, so they never match this pattern regardless of
+# what comes before it. An earlier version of this pattern also required
+# the character just before "Test" to be lowercase, a digit or an
+# underscore (i.e. `[a-z0-9_]Test$`), on the theory that a real word
+# boundary looks like "fooTest". That extra condition rejected exactly the
+# two-letter-acronym test names real JVM/Android code actually uses --
+# "IOTest.java", "HTTPTest.kt", "JSONTest.java", "TTest.java" -- because
+# the letter immediately before "Test" there is itself a capital, so it
+# never matched `[a-z0-9_]`. See is_test_path's docstring for why that
+# false-negative direction, not the false-positive one, is the cost worth
+# avoiding.
+_CAMEL_TEST_SUFFIX = re.compile(r"Test$")
+
 # Quote characters unified by every formatter that rewrites tokens rather
 # than whitespace, which is the class `git blame -w` cannot see through
 # and this project exists for.
@@ -87,6 +109,85 @@ def _all_paths_match(paths, needles):
     if not paths:
         return False
     return all(any(n in p for n in needles) for p in paths)
+
+
+def is_test_path(path):
+    """Identify test files by filename/directory convention, not substring match.
+
+    Recognises:
+      - any directory segment named tests/test/spec/specs/__tests__
+      - filename stems starting with "test_" or ending with "_test"/"_spec"
+      - a ".test." or ".spec." segment before the final extension
+        (e.g. "foo.test.js", "foo.spec.ts")
+      - a directory or filename stem ending in the literal, capitalized
+        word "Test" (e.g. "androidTest/", "FooTest.kt", "IOTest.java",
+        "TTest.java", bare "Test.kt"), the Android/JVM convention where the
+        word boundary is a capital letter rather than a separator
+
+    Deliberately does NOT match a bare "test"/"spec" substring anywhere in the
+    path, which would misclassify files like "latest.py", "contest.py",
+    "inspector.py", "specification.md" or "respect.go" as tests: the "Test"
+    check above is case-sensitive specifically so "contest", "latest",
+    "protest" and "Manifest" -- which end in the same four letters but
+    never capitalize the T -- stay false.
+
+    That check carries no other condition on what precedes "Test": it
+    matches "ABTest.kt" (an A/B-test feature class, not a test suite) just
+    as readily as "FooTest.kt". The same absence of a condition applies to
+    a directory segment: a directory named "ABTest/" is itself a match, so
+    every path beneath it -- "ABTest/inspector.py", "ABTest/specification.md",
+    every other file the directory contains -- is swept in as a test path
+    too, not just that one directory entry. That is an accepted, deliberate
+    cost, not an oversight -- see _CAMEL_TEST_SUFFIX's own comment for the
+    false positives an earlier, narrower version of this pattern let through
+    instead. The asymmetry this module is built on (see the module
+    docstring) is why the trade is made in this direction: a false positive
+    on a single filename costs a reader one extra file open to see that
+    "ABTest.kt" is not actually a test; a false positive on a directory
+    costs that same check repeated for every file underneath it, which is
+    more than one file open but still a bounded, one-time read. A false
+    negative silently drops a real co-changed test out of trace.py's
+    tier-0 priority (see trace._co_changed_priority) and tells an agent "no
+    test guards this" about a target a test genuinely does guard. Even the
+    widest directory sweep is cheaper than that: the first costs minutes,
+    the second is the wrong-direction, unrecoverable failure this whole
+    module exists to avoid.
+
+    This lives here, in the one module with no git and no filesystem access,
+    rather than in artifacts.py (where it originated) or trace.py, because
+    both now need the identical judgement on the identical kind of value: a
+    bare path string, nothing else. artifacts.py uses it to find the test
+    that guards a candidate; trace.py uses it to decide which of a commit's
+    co-changed paths are worth keeping when there are more than the cap
+    allows. A path is a path regardless of which caller is asking, so one
+    classifier here is what keeps both callers' answers from drifting apart,
+    the same reason _VENDOR_DIRS and _GENERATED_HINTS live here instead of
+    being duplicated at each call site.
+    """
+    if not path:
+        return False
+
+    dirname, filename = posixpath.split(path)
+    dir_parts = [p for p in dirname.split("/") if p]
+    for part in dir_parts:
+        if part.lower() in _TEST_DIR_NAMES or _CAMEL_TEST_SUFFIX.search(part):
+            return True
+
+    raw_stem = filename.split(".")[0]
+    lowered_segments = filename.lower().split(".")
+    lowered_stem = lowered_segments[0]
+    middle = lowered_segments[1:-1]  # segments between the stem and the final extension
+    if "test" in middle or "spec" in middle:
+        return True
+
+    if (lowered_stem.startswith("test_") or lowered_stem.endswith("_test")
+            or lowered_stem.endswith("_spec")):
+        return True
+
+    if _CAMEL_TEST_SUFFIX.search(raw_stem):
+        return True
+
+    return False
 
 
 def normalize_code_line(line):
