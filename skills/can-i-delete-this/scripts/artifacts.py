@@ -66,6 +66,8 @@ _STRINGS = {
         "danger.keep": "{marker}KEEP: {subject} ({day}, {sha})",
         "danger.guard": "{marker}Before deleting, confirm {guard} (its name looks like a "
             "test, not confirmed) still passes.",
+        "danger.guard_unverified": "{marker}If it is not a test, no test guards this: "
+            "add one before touching it.",
         "danger.warning": "{marker}WARNING: no test guards this. Add one before touching it.",
         "danger.no_marker": "No comment marker is known for this file type; "
             "prefix each line above with your language's own comment marker.",
@@ -149,6 +151,8 @@ _STRINGS = {
         "danger.keep": "{marker}유지: {subject} ({day}, {sha})",
         "danger.guard": "{marker}삭제하기 전에 {guard}(이름상 테스트로 보이나 확인되지 "
             "않음)가 통과하는지 확인하세요.",
+        "danger.guard_unverified": "{marker}테스트가 아니라면 이 코드를 지켜주는 테스트가 "
+            "없는 것이니, 손대기 전에 추가하세요.",
         "danger.warning": "{marker}주의: 이 코드를 지켜주는 테스트가 없습니다. 손대기 전에 "
             "테스트를 추가하세요.",
         "danger.no_marker": "이 파일 종류에 해당하는 주석 기호를 알 수 없습니다. 위 각 줄 "
@@ -439,7 +443,19 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
                     subject=subject or _t(lang, "common.reason_unknown"),
                     day=day, sha=sha)]
         if guard:
+            # `guard` is a name match (noise.is_test_path), never a
+            # confirmed one -- see _tests()'s docstring. danger.guard says
+            # so, but stopping there would let a name-only match silently
+            # take the place of danger.warning's "no test guards this" for
+            # a reader who never opens `guard` to check: told to "confirm
+            # ChiSquareTest.java still passes", a reader who finds
+            # production code there has learned nothing about whether
+            # anything actually guards the target. danger.guard_unverified
+            # is the same warning danger.warning gives, conditioned on
+            # `guard` turning out not to be a real test, so that path is
+            # never silently dropped just because a name matched.
             lines.append(_t(lang, "danger.guard", marker=marker_prefix, guard=guard))
+            lines.append(_t(lang, "danger.guard_unverified", marker=marker_prefix))
         else:
             lines.append(_t(lang, "danger.warning", marker=marker_prefix))
         if marker is None:
