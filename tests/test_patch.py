@@ -630,6 +630,25 @@ class TestRefusals(_FixtureCase):
             info, _verdict_without_artifact("deadbee" + "0" * 33))
         self.assertEqual(refused.code, "not-a-comment")
 
+    def test_ambiguous_no_evidence_citation_is_refused(self):
+        """A verdict with no evidence at all, against a trace with more
+        than one introduction_candidates entry, is the exact shape the
+        0.9.2 field run got wrong: skeleton() used to fall back to the
+        chronologically oldest candidate and build a confident KEEP
+        comment naming it, citing a commit that might have nothing to do
+        with the target. artifacts.py now routes this through the same
+        unresolved-citation warning an unresolved ref gets (see
+        tests/test_artifacts_ambiguous_citation.py), and that text is not
+        a comment, so patch.py must refuse it the same way."""
+        info = self.trace_for("python")
+        info["introduction_candidates"] = info["introduction_candidates"] + [{
+            "sha": "b1b1b1b" + "1" * 33, "subject": "unrelated change",
+            "date": "2020-01-01T00:00:00+00:00", "author": "Someone",
+            "author_email": "someone@example.com", "why": "pickaxe",
+        }]
+        refused = self._refuse(info, {"grade": "danger"})
+        self.assertEqual(refused.code, "not-a-comment")
+
     def test_malformed_trace_is_refused(self):
         refused = self._refuse({"target": {}}, _verdict(self.info["sha"]))
         self.assertEqual(refused.code, "malformed-trace")

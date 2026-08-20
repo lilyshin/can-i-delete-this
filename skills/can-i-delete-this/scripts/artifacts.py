@@ -64,8 +64,8 @@ _STRINGS = {
             "all). This trace has nothing to attribute this artifact to.",
 
         "danger.keep": "{marker}KEEP: {subject} ({day}, {sha})",
-        "danger.guard": "{marker}Before deleting, confirm {guard} (its name looks like a "
-            "test, not confirmed) still passes.",
+        "danger.guard_intro": "{marker}Before deleting, confirm this still passes "
+            "(its name looks like a test, not confirmed):",
         "danger.guard_plural_intro": "{marker}Before deleting, confirm these still pass "
             "(names look like tests, not confirmed):",
         "danger.guard_unverified": "{marker}If it is not a test, no test guards this: "
@@ -161,8 +161,8 @@ _STRINGS = {
             "않습니다. 이 trace에는 이 결과물의 근거로 삼을 대상이 없습니다.",
 
         "danger.keep": "{marker}유지: {subject} ({day}, {sha})",
-        "danger.guard": "{marker}삭제하기 전에 {guard}(이름상 테스트로 보이나 확인되지 "
-            "않음)가 통과하는지 확인하세요.",
+        "danger.guard_intro": "{marker}삭제하기 전에 아래 파일이 통과하는지 확인하세요"
+            "(이름상 테스트로 보이나 확인되지 않음):",
         "danger.guard_plural_intro": "{marker}삭제하기 전에 아래 파일들이 모두 통과하는지 "
             "확인하세요(이름상 테스트로 보이나 확인되지 않음):",
         "danger.guard_unverified": "{marker}테스트가 아니라면 이 코드를 지켜주는 테스트가 "
@@ -266,7 +266,7 @@ def _t(lang, key, **kwargs):
     return template.format(**kwargs) if kwargs else template
 
 
-def _top(trace_data, real_refs, all_refs):
+def _top(grade, trace_data, real_refs, all_refs):
     """Pick the candidate the artifact should describe, and how it was found.
 
     `real_refs` is `citation.real_introduction_refs(evidence)`: commit refs
@@ -277,6 +277,9 @@ def _top(trace_data, real_refs, all_refs):
     commits; they diverge exactly when a verdict cites commits under roles
     like `"superseded"` or `"reference"` and nothing tagged `"introduced"` --
     the "not_introduction" status below exists for that case.
+
+    `grade` only matters to the "ambiguous" branch below; every other
+    branch answers the same way regardless of grade.
 
     Returns (candidate, status):
 
@@ -304,7 +307,23 @@ def _top(trace_data, real_refs, all_refs):
       misattribution the "unresolved" case above already guards against,
       just reached from a different direction, so this says so plainly
       instead of guessing.
-    - "fallback": no citation was made at all (`all_refs` is empty too).
+    - "ambiguous": no citation was made at all (`all_refs` is empty too),
+      `introduction_candidates` has more than one entry, and `grade` is
+      not `"unknown"`. Naming `introduction_candidates[0]` here anyway is
+      exactly the 0.9.2 field bug this status exists to stop: a caller
+      that skips `evidence` entirely has no more basis for picking one
+      candidate over another than a citation that fails to resolve does,
+      so this is treated the same as "unresolved" -- `candidate` is {}.
+      Both real call sites (`patch.py`, `artifacts.py`'s own CLI) always
+      pass `evidence` from a verdict `verdict.validate` already checked,
+      so this only fires when a caller invokes `skeleton()` directly with
+      none at all. `grade == "unknown"` is exempt: unknown's own rendering
+      already says "closest commit" and flags the investigation as
+      inconclusive, so guessing the oldest candidate there is the same
+      honest fallback it always was, not a new confident wrong answer.
+    - "fallback": no citation was made at all (`all_refs` is empty too),
+      and either `introduction_candidates` has exactly one entry (nothing
+      else it could be) or `grade` is `"unknown"` (see "ambiguous" above).
       introduction_candidates is sorted chronologically, oldest first, and
       the oldest entry is used for lack of anything better, same as before
       this function knew about verdicts. `candidate` is {} if
@@ -323,6 +342,8 @@ def _top(trace_data, real_refs, all_refs):
     if all_refs:
         return {}, "not_introduction"
     if cands:
+        if grade != "unknown" and len(cands) > 1:
+            return {}, "ambiguous"
         return cands[0], "fallback"
     return {}, "empty"
 
@@ -475,8 +496,9 @@ def _guard_text(tests, capped, lang):
     itself needs "at least" when `capped` is True.
 
     This is the comma-joined single-line form `conditional.run_guard` and
-    `safe.guarded_by` still use. A `danger` verdict naming more than one
-    guard uses `_guard_lines` instead; see `skeleton()`.
+    `safe.guarded_by` still use; `danger` uses `_guard_lines` instead (one
+    path per line, at any count -- see that function and `skeleton()`) and
+    reads only `plural` from this function's return value, not `guard`.
 
     Returns `(guard, plural)`. `guard` is None when `tests` is empty.
     `plural` is True whenever more than one path is being described, named
@@ -498,14 +520,24 @@ def _guard_lines(tests, capped, total_changed, present_changed, lang):
     `tests` is cut to `_MAX_NAMED_GUARDS` or the cited commit's
     `co_changed` list was cut before `_tests()` ever saw it.
 
-    This is the shape a `danger` verdict with more than one named guard
-    gets in `skeleton()`: a single sentence cannot carry a list, a count
+    This is the shape every `danger` verdict's guard block gets in
+    `skeleton()`, regardless of how many test-looking paths were found --
+    including exactly one. A single sentence cannot carry a path, a count
     and a caveat at once without either running past a linter's max line
     length or losing one of the three (see this project's fix history for
-    why). `conditional.run_guard` and `safe.guarded_by` keep the
-    comma-joined form `_guard_text` returns instead -- those are checklist
-    and evidence lines, not lines `patch.py` inserts into source, so the
-    length pressure that drove this split does not apply to them.
+    why one real path plus a single-sentence wrapper was already long
+    enough to do that). `skeleton()` cannot pick a length to branch on
+    instead: it knows the comment marker it is about to prefix each line
+    with, but not the indentation `patch.py` will add once the line reaches
+    the target file, so any threshold here would be a guess about a length
+    this module never gets to see. Splitting unconditionally sidesteps the
+    guess entirely -- every line this function returns carries at most one
+    path, so no line's length is ever in question here regardless of how
+    long that one path turns out to be. `conditional.run_guard` and
+    `safe.guarded_by` keep the comma-joined form `_guard_text` returns
+    instead -- those are checklist and evidence lines, not lines
+    `patch.py` inserts into source, so the length pressure that drove this
+    split does not apply to them.
 
     `extra > 0` (more test-looking paths than `_MAX_NAMED_GUARDS` were
     found) says so via `_and_more_text`, same as before. But a commit can
@@ -573,12 +605,24 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
     # the real introduction" (fallback would silently misattribute there).
     real_refs = citation.real_introduction_refs(evidence)
     all_refs = citation.commit_refs(evidence)
-    top, status = _top(trace_data, real_refs, all_refs)
+    top, status = _top(grade, trace_data, real_refs, all_refs)
 
     if status == "unresolved":
         return _unresolved_citation_text(grade, target, real_refs, lang=lang)
     if status == "not_introduction":
         return _not_introduction_text(grade, target, all_refs, lang=lang)
+    if status == "ambiguous":
+        # No evidence was passed at all, and more than one candidate
+        # exists, so nothing here singles one out -- see _top's
+        # "ambiguous" branch for why guessing introduction_candidates[0]
+        # anyway would be the exact misattribution this status exists to
+        # stop. `real_refs` is empty in this branch (see _top), so this
+        # reuses `_unresolved_citation_text`'s existing "citation could
+        # not be verified" wording rather than inventing a separate
+        # message for "no citation was even attempted": both leave the
+        # reader in the same place, naming no candidate and saying not to
+        # treat the grade as confirmed.
+        return _unresolved_citation_text(grade, target, real_refs, lang=lang)
 
     # Every field below is checked with isinstance() before use, not coerced
     # with str(). str(x) turns a missing/None date into "" or "None" and lets
@@ -608,8 +652,8 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
         # would be a syntax error once applied. So any line added to this
         # branch has to carry the marker prefix, or patch.py will refuse to
         # build a patch at all. That refusal is deliberate for the
-        # unresolved/not_introduction texts returned above (an unverified
-        # attribution must not be nailed into source), and for the
+        # unresolved/not_introduction/ambiguous texts returned above (an
+        # unverified attribution must not be nailed into source), and for the
         # `danger.no_marker` line below it never arises, since patch.py
         # refuses a markerless file type before it ever calls this.
         #
@@ -627,35 +671,37 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
                     day=day, sha=sha)]
         if guard:
             # `guard` is a name match (noise.is_test_path), never a
-            # confirmed one -- see _tests()'s docstring. danger.guard says
-            # so, but stopping there would let a name-only match silently
-            # take the place of danger.warning's "no test guards this" for
-            # a reader who never opens `guard` to check: told to "confirm
-            # ChiSquareTest.java still passes", a reader who finds
-            # production code there has learned nothing about whether
-            # anything actually guards the target. danger.guard_unverified
-            # is the same warning danger.warning gives, conditioned on
-            # `guard` turning out not to be a real test, so that path is
-            # never silently dropped just because a name matched.
+            # confirmed one -- see _tests()'s docstring. Naming it is not
+            # enough on its own: stopping there would let a name-only
+            # match silently take the place of danger.warning's "no test
+            # guards this" for a reader who never opens the path to
+            # check. danger.guard_unverified is the same warning
+            # danger.warning gives, conditioned on the named path turning
+            # out not to be a real test, so that caveat is never silently
+            # dropped just because a name matched.
             #
-            # More than one named guard cannot be carried by one sentence:
-            # a comma-joined list, a remainder count and a singular/plural
-            # caveat, all in one line, either loses one of the three or
-            # runs the line past a linter's max line length once real
-            # package paths are involved (this project's own fix history
-            # found both). So a `danger` verdict with more than one guard
-            # gets one path per line instead -- `danger.guard_plural_intro`
-            # followed by `_guard_lines`' output -- and only the
-            # single-guard case still uses the one-line `danger.guard`
-            # sentence below.
-            if guard_plural:
-                lines.append(_t(lang, "danger.guard_plural_intro", marker=marker_prefix))
-                guard_prefix = marker_prefix + "  "
-                for guard_line in _guard_lines(tests, capped, total_changed,
-                                                present_changed, lang):
-                    lines.append(guard_prefix + guard_line)
-            else:
-                lines.append(_t(lang, "danger.guard", marker=marker_prefix, guard=guard))
+            # A comma-joined list, a remainder count and a singular/plural
+            # caveat cannot fit in one sentence without either losing one
+            # of the three or running the line past a linter's max line
+            # length once a real package path is involved -- this
+            # project's own fix history found both, and one real path plus
+            # this wording was already enough to do it alone, so the split
+            # applies at every count, including exactly one guard, not just
+            # once a second path shows up. There is no line-length
+            # threshold to branch on instead: this function knows the
+            # comment marker but not the indentation `patch.py` adds once
+            # the line reaches the target file, so it never gets to see
+            # the length a threshold would need to compare against. One
+            # path per line -- `danger.guard_intro`/`danger.guard_plural_intro`
+            # followed by `_guard_lines`' output -- keeps every line's own
+            # length independent of how many guards were found or how long
+            # any one path is.
+            intro_key = "danger.guard_plural_intro" if guard_plural else "danger.guard_intro"
+            lines.append(_t(lang, intro_key, marker=marker_prefix))
+            guard_prefix = marker_prefix + "  "
+            for guard_line in _guard_lines(tests, capped, total_changed,
+                                            present_changed, lang):
+                lines.append(guard_prefix + guard_line)
             guard_key = "danger.guard_unverified_plural" if guard_plural \
                 else "danger.guard_unverified"
             lines.append(_t(lang, guard_key, marker=marker_prefix))

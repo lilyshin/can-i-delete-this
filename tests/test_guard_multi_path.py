@@ -237,5 +237,115 @@ class TestConditionalRunGuardPlural(unittest.TestCase):
                       "t/case_03_test.py, and 1 more", matching[0])
 
 
+class TestSingleGuardIsAlsoLineSplit(unittest.TestCase):
+    """0.9.2 kept exactly one guard on a single combined sentence
+    ("...confirm X (its name...) still passes.") and only switched to one
+    path per line once a second path showed up. A single real path plus
+    the wording around it was already enough on its own -- 154 chars once
+    patch.py's own indentation was added on top -- to blow past a
+    linter's max line length, so the split must apply unconditionally,
+    not just above some count this module has no way to threshold on
+    (see TestGuardLineLengthDiscipline below for why no such threshold
+    exists here).
+    """
+
+    def test_intro_path_and_closing_are_three_separate_lines_en(self):
+        out = artifacts.skeleton("danger", _trace(1, 1))
+        lines = out.splitlines()
+        intro = [l for l in lines if l.startswith("# Before deleting")]
+        self.assertEqual(len(intro), 1)
+        self.assertNotIn("t/case_01_test.py", intro[0])
+        self.assertIn("#   t/case_01_test.py", lines)
+
+    def test_intro_path_and_closing_are_three_separate_lines_ko(self):
+        out = artifacts.skeleton("danger", _trace(1, 1), lang="ko")
+        lines = out.splitlines()
+        intro = [l for l in lines if l.startswith("# 삭제하기 전에")]
+        self.assertEqual(len(intro), 1)
+        self.assertNotIn("t/case_01_test.py", intro[0])
+        self.assertIn("#   t/case_01_test.py", lines)
+
+    def test_single_guard_keeps_the_singular_closing_wording(self):
+        out = artifacts.skeleton("danger", _trace(1, 1))
+        self.assertIn(
+            "# If it is not a test, no test guards this: add one before "
+            "touching it.",
+            out.splitlines(),
+        )
+        self.assertNotIn("If none of these are tests", out)
+
+    def test_single_capped_guard_still_discloses_the_list_cut(self):
+        # One test-looking path survived a cap that cut the rest of this
+        # commit's co_changed list before _tests() ever saw them: the one
+        # named path is not the whole story, so this must still carry a
+        # disclosure line, the same as the multi-path capped case does.
+        out = artifacts.skeleton("danger", _trace(1, 4))
+        self.assertIn(
+            "#   and possibly more: 1 of 4 files from this commit are listed",
+            out.splitlines(),
+        )
+
+
+class TestTwoAndThreePathsRemainOnePerLine(unittest.TestCase):
+    """The task's four named checkpoints (2, 3, 4, 12 paths) are otherwise
+    covered piecemeal by TestUncappedRemainderIsExact (4, 12) and
+    TestCappedRemainderSaysAtLeast (5 of 30); 2 and 3 are pinned here so
+    every checkpoint has direct coverage in one place, and so a mutation
+    that only breaks the 2-or-3-path boundary (as opposed to 1 or 4+)
+    would be caught.
+    """
+
+    def test_two_paths_are_named_one_per_line_with_no_tail(self):
+        out = artifacts.skeleton("danger", _trace(2, 2))
+        lines = out.splitlines()
+        self.assertIn("#   t/case_01_test.py", lines)
+        self.assertIn("#   t/case_02_test.py", lines)
+        self.assertFalse(any(l.startswith("#   and") for l in lines))
+
+    def test_three_paths_are_named_one_per_line_with_no_tail(self):
+        out = artifacts.skeleton("danger", _trace(3, 3))
+        lines = out.splitlines()
+        for i in (1, 2, 3):
+            self.assertIn("#   t/case_{:02d}_test.py".format(i), lines)
+        self.assertFalse(any(l.startswith("#   and") for l in lines))
+
+
+class TestGuardLineLengthDiscipline(unittest.TestCase):
+    """No max-line-length constant exists in artifacts.py to branch on
+    here: this module knows the comment marker it is about to prefix each
+    line with, but not the indentation `patch.py` adds once the line
+    reaches the target file, so any threshold it picked would be a guess
+    about a length it never gets to see. Splitting the output so no line
+    ever carries more than one path, with a short fixed sentence around
+    that path, keeps every line short by construction instead of by a
+    guessed limit -- checked here by subtracting each real path back out
+    of the rendered lines and confirming what remains stays well under a
+    linter's max line length, for both a single long path and a dozen of
+    them.
+    """
+
+    _LONG_PATH = "apps/bombay/lib/bombay/schemas/space_settings_configuration_test.exs"
+
+    def test_single_long_path_keeps_non_path_text_short(self):
+        trace = _trace(1, 1, lang_paths=[self._LONG_PATH])
+        out = artifacts.skeleton("danger", trace)
+        for line in out.splitlines():
+            without_path = line.replace(self._LONG_PATH, "")
+            self.assertLessEqual(len(without_path), 100, repr(line))
+
+    def test_twelve_long_paths_keep_non_path_text_short(self):
+        long_paths = [
+            "apps/bombay/lib/bombay/schemas/space_settings_configuration_{:02d}_test.exs".format(i)
+            for i in range(1, 13)
+        ]
+        trace = _trace(12, 12, lang_paths=long_paths)
+        out = artifacts.skeleton("danger", trace)
+        for line in out.splitlines():
+            stripped = line
+            for p in long_paths:
+                stripped = stripped.replace(p, "")
+            self.assertLessEqual(len(stripped), 100, repr(line))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -124,6 +124,17 @@ class TestKeepMarkerOnGuardAndWarningLines(unittest.TestCase):
         for line in out.splitlines():
             self.assertTrue(line.startswith("-- "), repr(line))
 
+    def test_guard_path_lands_on_its_own_marker_prefixed_line(self):
+        # A single co-changed test still gets its own line, not a
+        # sentence with the path folded into it -- see
+        # test_artifacts.py::TestDangerGuardLineSplitting for why.
+        out = artifacts.skeleton("danger", _guarded_trace("billing/fee.py"))
+        self.assertIn("#   billing/fee_test.py", out.splitlines())
+
+    def test_sql_guard_path_lands_on_its_own_marker_prefixed_line(self):
+        out = artifacts.skeleton("danger", _guarded_trace("migrations/0001_fee.sql"))
+        self.assertIn("--   billing/fee_test.py", out.splitlines())
+
 
 class TestKeepMarkerIsLanguageIndependent(unittest.TestCase):
     """The comment marker is the target file's syntax, not chrome: it must
