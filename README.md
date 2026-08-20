@@ -85,7 +85,7 @@ looked up first, and the resolved file and line get stated back to you before
 anything runs, so a wrong target cannot pass silently; with no argument it
 asks instead of guessing. Both entry points run the same workflow.
 
-Four steps, only one of which is the model's:
+Five steps, only one of which is the model's:
 
 | Step | What it does |
 |---|---|
@@ -93,10 +93,14 @@ Four steps, only one of which is the model's:
 | the agent | Reads that JSON, recovers intent (tests, PR body, comments, in that order of trust over the commit subject), writes the verdict |
 | `verdict.py` | Refuses a grade above `unknown` that carries no commit reference. Enforced, not documented |
 | `render.py`, `artifacts.py` | A self-contained HTML report (no CDN, no external font, light and dark), plus paste-ready next-step text |
+| `patch.py` | Turns a `danger` verdict's keep-comment into a unified diff for `git apply`; refuses when the target moved since the trace ran, or when the keep-comment carries no resolved citation |
 
 Facts come only from git: the agent says *which* commit, git says *what that
 commit is*. Nothing else in the pipeline is allowed to invent a sha, a
 subject or a date.
+
+What stays the same across releases, and what does not, is in
+[docs/stability.md](docs/stability.md).
 
 ## What comes back
 
@@ -245,6 +249,9 @@ squash가 실제 도입 커밋 위에 쌓이면 blame은 맨 위에 있는 것�
 `danger` 등급의 KEEP 코멘트는 손으로 붙여넣는 대신, `patch.py`로 만든 패치
 파일을 `git apply`로 적용할 수도 있습니다. 도구는 패치만 만들 뿐, 대상
 파일에 직접 쓰거나 `git apply`를 대신 실행하지는 않습니다.
+
+무엇이 릴리스마다 그대로 유지되고 무엇이 아닌지는
+[docs/stability.md](docs/stability.md)에 있습니다.
 
 **쓰이는 순간 네 가지:** 코드를 지우는 PR을 리뷰할 때, dead code를 정리하다
 "지워도 될 것 같은데"에서 멈출 때, `git blame`이 `chore: apply formatter`를
