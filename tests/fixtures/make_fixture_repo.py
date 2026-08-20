@@ -1635,3 +1635,48 @@ def build_guard_name_collision(dest: str, *, name: str = "guard_name_collision")
         "false_positive_path": "billing/ABTest.kt",
         "test_path": "tests/payment_test.py",
     }
+
+
+def build_guard_capped_test_paths(dest: str, *, name: str = "guard_capped_test_paths",
+                                   n: int = 30) -> dict:
+    """One commit touching the target plus `n` test-looking paths
+    (`t/case_01_test.py` .. `t/case_{n}_test.py`), all sorting ahead of the
+    target alphabetically and all recognized by `noise.is_test_path`.
+
+    Regression fixture for final-rereview's N1: when `trace()`'s
+    `max_co_changed` cap (passed by the caller, not this builder) is
+    smaller than `n`, `co_changed` keeps only the top `max_co_changed` of
+    these -- co-changed tests rank first in `_co_changed_priority`, so
+    they fill the cap before any non-test path would -- while
+    `co_changed_totals` still records the true count of every path this
+    commit touched. `artifacts._guard_text`/`_guard_lines` must read that
+    disclosed total (via `_co_changed_capped`) rather than trust
+    `co_changed`'s already-capped length: the "and N more" tail describes
+    a set this fixture makes far larger than what the cap lets through.
+    """
+    repo = _init(dest, name)
+    target = repo / "app" / "service.py"
+    target.parent.mkdir(parents=True)
+    t_dir = repo / "t"
+    t_dir.mkdir(parents=True)
+
+    target.write_text("def charge(order):\n    return order.total\n")
+    for i in range(1, n + 1):
+        (t_dir / "case_{:02d}_test.py".format(i)).write_text(
+            "def test_case_{:02d}():\n    assert True\n".format(i))
+    target.write_text(
+        "def charge(order):\n"
+        "    if order.already_charged:\n"
+        "        return {'status': 'duplicate'}\n"
+        "    return order.total\n"
+    )
+    sha = _commit(repo, "hotfix: prevent double charge (#4127)", "2026-08-20T09:00:00")
+
+    return {
+        "repo": str(repo),
+        "path": "app/service.py",
+        "line": 2,
+        "sha": sha,
+        "test_paths": ["t/case_{:02d}_test.py".format(i) for i in range(1, n + 1)],
+        "total_changed": n,  # test paths only, target itself excluded
+    }

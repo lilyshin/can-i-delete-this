@@ -66,6 +66,8 @@ _STRINGS = {
         "danger.keep": "{marker}KEEP: {subject} ({day}, {sha})",
         "danger.guard": "{marker}Before deleting, confirm {guard} (its name looks like a "
             "test, not confirmed) still passes.",
+        "danger.guard_plural_intro": "{marker}Before deleting, confirm these still pass "
+            "(names look like tests, not confirmed):",
         "danger.guard_unverified": "{marker}If it is not a test, no test guards this: "
             "add one before touching it.",
         "danger.guard_unverified_plural": "{marker}If none of these are tests, no test "
@@ -74,6 +76,7 @@ _STRINGS = {
         "danger.no_marker": "No comment marker is known for this file type; "
             "prefix each line above with your language's own comment marker.",
         "guard.and_more": "and {count} more",
+        "guard.and_at_least_more": "and at least {count} more",
 
         "conditional.title": "Deletion checklist for {path}:{start}",
         "conditional.condition": "- [ ] Confirm the condition that made this "
@@ -81,6 +84,8 @@ _STRINGS = {
         "conditional.introduced": "- [ ] Introduced in {sha} ({subject})",
         "conditional.run_guard": "- [ ] Run {guard} (its name looks like a test, "
             "not confirmed; check it actually covers this)",
+        "conditional.run_guard_plural": "- [ ] Run {guard} (these names look like "
+            "tests, not confirmed; check they actually cover this)",
         "conditional.add_test": "- [ ] Add a regression test first",
         "conditional.signoff": "- [ ] Get sign-off from someone who knows this area",
 
@@ -154,6 +159,8 @@ _STRINGS = {
         "danger.keep": "{marker}유지: {subject} ({day}, {sha})",
         "danger.guard": "{marker}삭제하기 전에 {guard}(이름상 테스트로 보이나 확인되지 "
             "않음)가 통과하는지 확인하세요.",
+        "danger.guard_plural_intro": "{marker}삭제하기 전에 아래 파일들이 모두 통과하는지 "
+            "확인하세요(이름상 테스트로 보이나 확인되지 않음):",
         "danger.guard_unverified": "{marker}테스트가 아니라면 이 코드를 지켜주는 테스트가 "
             "없는 것이니, 손대기 전에 추가하세요.",
         "danger.guard_unverified_plural": "{marker}이 중 테스트가 하나도 없다면 이 코드를 "
@@ -163,6 +170,7 @@ _STRINGS = {
         "danger.no_marker": "이 파일 종류에 해당하는 주석 기호를 알 수 없습니다. 위 각 줄 "
             "앞에 사용하는 언어의 주석 기호를 직접 붙이세요.",
         "guard.and_more": "외 {count}개 더",
+        "guard.and_at_least_more": "외 최소 {count}개 더",
 
         "conditional.title": "{path}:{start} 삭제 체크리스트:",
         "conditional.condition": "- [ ] 이 코드가 필요했던 조건이 더 이상 유효하지 "
@@ -170,6 +178,8 @@ _STRINGS = {
         "conditional.introduced": "- [ ] 도입 커밋: {sha} ({subject})",
         "conditional.run_guard": "- [ ] {guard} 실행해서 확인 (이름상 테스트로 보이나 "
             "확인되지 않음, 실제로 이 코드를 검증하는지 확인 필요)",
+        "conditional.run_guard_plural": "- [ ] {guard} 실행해서 확인 (이름상 테스트로 "
+            "보이나 확인되지 않음, 실제로 이 코드를 검증하는지 확인 필요)",
         "conditional.add_test": "- [ ] 회귀 테스트를 먼저 추가",
         "conditional.signoff": "- [ ] 이 영역을 잘 아는 사람에게 확인받기",
 
@@ -376,7 +386,62 @@ def _tests(trace_data, real_sha=None):
 _MAX_NAMED_GUARDS = 3
 
 
-def _guard_text(tests, lang):
+def _co_changed_capped(trace_data, real_sha):
+    """Whether `real_sha`'s `co_changed` entries were already cut down by
+    trace.py's per-commit cap before `_tests()` ever filtered them.
+
+    `co_changed_totals[real_sha]` is the true count of every path that
+    commit touched, recorded before trace.py ranks and truncates; the
+    `co_changed` list itself keeps only the survivors of that cut (see
+    trace.py's own comment on `co_changed_totals`). When the two agree,
+    nothing was cut for this sha and `_tests()` saw every test-looking
+    path it touched, so a remainder computed from `tests` is exact. When
+    they disagree, the cap may have dropped test-looking paths before
+    `_tests()`'s filter ever ran, so any count built from `tests` alone is
+    a lower bound, not a total.
+
+    The total is also treated as unrecoverable, and this returns True,
+    when it cannot be read with confidence: an older trace with no
+    `co_changed_totals` key at all, a value of the wrong shape, no entry
+    for this sha, or a bool (a bool is an int subclass in Python, so
+    `isinstance(True, int)` is True; render.py's own hint rejects the same
+    case on the same field, and reading a bool as a path count would be
+    the same silent-miscount failure). Folding "unknown" into "capped" is
+    the conservative direction: it can only make a caller say "at least"
+    where the truth happened to be exact, never the reverse -- claiming
+    exactness the data cannot support is the failure this exists to avoid.
+    """
+    if real_sha is None:
+        return False
+    totals = trace_data.get("co_changed_totals")
+    if not isinstance(totals, dict):
+        return True
+    total = totals.get(real_sha)
+    if not isinstance(total, int) or isinstance(total, bool):
+        return True
+    present = sum(1 for c in trace_data.get("co_changed", [])
+                  if c.get("sha") == real_sha)
+    return total > present
+
+
+def _and_more_text(extra, capped, lang):
+    """The tail naming how many named-but-unshown tests remain.
+
+    `extra` is always `len(tests) - len(shown)` (see `_guard_text` and
+    `_guard_lines`), and `tests` itself comes from the already-capped
+    `co_changed` list (see `_tests()`). That makes `extra` the exact
+    remainder of what `_tests()` saw, but only the true remainder of what
+    the commit actually touched when nothing was cut before `_tests()`
+    ran -- which is exactly what `capped` (see `_co_changed_capped`)
+    tracks. "and N more" is only honest when `capped` is False; otherwise
+    the real count could be higher than `extra`, so "and at least N more"
+    is what the data can support.
+    """
+    key = "guard.and_at_least_more" if capped else "guard.and_more"
+    return _t(lang, key, count=extra)
+
+
+def _guard_text(tests, capped, lang):
     """Build the guard line's value, naming up to `_MAX_NAMED_GUARDS` of
     `tests` and disclosing any remainder as a count instead of dropping it.
 
@@ -388,12 +453,17 @@ def _guard_text(tests, lang):
     `tests` existed. Silently naming a subset (3 of 9, say) would repeat
     the same mistake at a smaller scale, so anything left unnamed is
     counted, not dropped -- the same disclose-the-cut stance render.py
-    takes for `co_changed` itself.
+    takes for `co_changed` itself. See `_and_more_text` for why that count
+    itself needs "at least" when `capped` is True.
+
+    This is the comma-joined single-line form `conditional.run_guard` and
+    `safe.guarded_by` still use. A `danger` verdict naming more than one
+    guard uses `_guard_lines` instead; see `skeleton()`.
 
     Returns `(guard, plural)`. `guard` is None when `tests` is empty.
     `plural` is True whenever more than one path is being described, named
     or only counted, so the caller can pick a grammatically matching
-    string for danger.guard_unverified.
+    string for danger.guard_unverified/conditional.run_guard.
     """
     if not tests:
         return None, False
@@ -401,8 +471,32 @@ def _guard_text(tests, lang):
     extra = len(tests) - len(shown)
     guard = ", ".join(shown)
     if extra > 0:
-        guard = "{}, {}".format(guard, _t(lang, "guard.and_more", count=extra))
+        guard = "{}, {}".format(guard, _and_more_text(extra, capped, lang))
     return guard, len(tests) > 1
+
+
+def _guard_lines(tests, capped, lang):
+    """One test path per line, plus a trailing count line when `tests` is
+    cut to `_MAX_NAMED_GUARDS`.
+
+    This is the shape a `danger` verdict with more than one named guard
+    gets in `skeleton()`: a single sentence cannot carry a list, a count
+    and a caveat at once without either running past a linter's max line
+    length or losing one of the three (see this project's fix history for
+    why). `conditional.run_guard` and `safe.guarded_by` keep the
+    comma-joined form `_guard_text` returns instead -- those are checklist
+    and evidence lines, not lines `patch.py` inserts into source, so the
+    length pressure that drove this split does not apply to them.
+
+    None of these lines carry the comment marker; the caller (`skeleton`)
+    adds it, the same as every other line in the danger branch.
+    """
+    shown = tests[:_MAX_NAMED_GUARDS]
+    extra = len(tests) - len(shown)
+    lines = list(shown)
+    if extra > 0:
+        lines.append(_and_more_text(extra, capped, lang))
+    return lines
 
 
 def skeleton(grade, trace_data, evidence=None, *, lang="en"):
@@ -453,8 +547,10 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
     raw_date = top.get("date")
     day = raw_date[:10] if isinstance(raw_date, str) and raw_date else _t(lang, "common.date_unknown")
 
-    tests = _tests(trace_data, raw_sha if isinstance(raw_sha, str) and raw_sha else None)
-    guard, guard_plural = _guard_text(tests, lang)
+    real_sha = raw_sha if isinstance(raw_sha, str) and raw_sha else None
+    tests = _tests(trace_data, real_sha)
+    capped = _co_changed_capped(trace_data, real_sha)
+    guard, guard_plural = _guard_text(tests, capped, lang)
 
     if grade == "danger":
         # patch.py turns this block into a diff that inserts it into the
@@ -491,11 +587,25 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
             # anything actually guards the target. danger.guard_unverified
             # is the same warning danger.warning gives, conditioned on
             # `guard` turning out not to be a real test, so that path is
-            # never silently dropped just because a name matched. `guard`
-            # can name more than one path (see _guard_text); the sentence
-            # must then say "none of these", not "it", or it misreports how
-            # many candidates it is talking about.
-            lines.append(_t(lang, "danger.guard", marker=marker_prefix, guard=guard))
+            # never silently dropped just because a name matched.
+            #
+            # More than one named guard cannot be carried by one sentence:
+            # a comma-joined list, a remainder count and a singular/plural
+            # caveat, all in one line, either loses one of the three or
+            # runs the line past a linter's max line length once real
+            # package paths are involved (this project's own fix history
+            # found both). So a `danger` verdict with more than one guard
+            # gets one path per line instead -- `danger.guard_plural_intro`
+            # followed by `_guard_lines`' output -- and only the
+            # single-guard case still uses the one-line `danger.guard`
+            # sentence below.
+            if guard_plural:
+                lines.append(_t(lang, "danger.guard_plural_intro", marker=marker_prefix))
+                guard_prefix = marker_prefix + "  "
+                for guard_line in _guard_lines(tests, capped, lang):
+                    lines.append(guard_prefix + guard_line)
+            else:
+                lines.append(_t(lang, "danger.guard", marker=marker_prefix, guard=guard))
             guard_key = "danger.guard_unverified_plural" if guard_plural \
                 else "danger.guard_unverified"
             lines.append(_t(lang, guard_key, marker=marker_prefix))
@@ -506,8 +616,20 @@ def skeleton(grade, trace_data, evidence=None, *, lang="en"):
         return "\n".join(lines)
 
     if grade == "conditional":
-        guard_line = _t(lang, "conditional.run_guard", guard=guard) if guard \
-            else _t(lang, "conditional.add_test")
+        # Unlike the danger branch above, this stays one checklist item:
+        # a checkbox line is not inserted into source through patch.py, so
+        # the line-length pressure that split the danger branch into one
+        # path per line does not apply here (see this project's decision
+        # to keep the checklist and evidence forms as they were). `guard`
+        # can still name more than one path, so only the pronoun/verb
+        # needs to track that (`conditional.run_guard_plural`), same as
+        # `danger.guard_unverified_plural` above.
+        if guard:
+            run_guard_key = "conditional.run_guard_plural" if guard_plural \
+                else "conditional.run_guard"
+            guard_line = _t(lang, run_guard_key, guard=guard)
+        else:
+            guard_line = _t(lang, "conditional.add_test")
         return "\n".join([
             _t(lang, "conditional.title", path=target.get("path"), start=target.get("start")),
             _t(lang, "conditional.condition"),
