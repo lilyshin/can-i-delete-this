@@ -137,11 +137,12 @@ names no commit to attach the patch to.
   snippet's own recorded window.
 - The diff `patch.py` emits must be applied with `git apply` from the
   repository root. It is not applied for you.
-- A KEEP comment's path lines can exceed a linter's maximum line length
-  when the repository's own paths are long. The path is never shortened
-  to fit, because a shortened path is no longer the fact it is reporting.
-  Every other line the comment can carry is this project's own wording,
-  and that wording is kept to 75 characters or fewer (leaving room for a
-  4-space indent under a linter's typical 79-column default), so it never
-  causes the overage on its own; a path is the only fact whose length
-  this project does not control.
+- A KEEP comment can exceed a linter's maximum line length, on either of
+  the two lines that carry a fact rather than this project's wording: the
+  path line, when the repository's own paths are long, and the `KEEP:`
+  line, which carries the introducing commit's subject. Neither is ever
+  shortened to fit, because a shortened path or a truncated subject is no
+  longer the fact it is reporting. Every other line is this project's own
+  wording, and that wording is kept to 75 characters or fewer (leaving
+  room for a 4-space indent under a linter's typical 79-column default),
+  so the wording never causes the overage on its own.
