@@ -35,7 +35,8 @@ def _trace(path, *, co_changed=None):
 
 def _guarded_trace(path):
     """Same as _trace, but with a co-changed test on the cited commit, so
-    the danger.guard line is emitted instead of danger.warning."""
+    the guard intro/path/unverified block is emitted instead of
+    danger.warning."""
     return _trace(path, co_changed=[{"path": "billing/fee_test.py", "sha": SHA}])
 
 
@@ -88,7 +89,7 @@ class TestKeepMarkerUnknownExtension(unittest.TestCase):
 
 
 class TestKeepMarkerOnGuardAndWarningLines(unittest.TestCase):
-    """A fix that only touches the KEEP line and leaves danger.guard or
+    """A fix that only touches the KEEP line and leaves the guard block or
     danger.warning on a stale `//` is exactly the bug this task removes."""
 
     def test_warning_line_uses_target_marker(self):
@@ -107,14 +108,15 @@ class TestKeepMarkerOnGuardAndWarningLines(unittest.TestCase):
         self.assertNotIn("// Before deleting", out)
 
     def test_guard_unverified_line_also_carries_target_marker(self):
-        # danger.guard_unverified is a second line appended alongside
-        # danger.guard (see artifacts.py's "if guard:" branch); patch.py
-        # checks every line of the block, not just the first, before
-        # inserting it, so a marker-less second line would make the whole
-        # patch invalid the same way a stale "//" would. Checked on every
-        # line of the guarded skeleton, not just one, so a mutation that
-        # appends the new line via marker="" (or omits the kwarg) is
-        # caught regardless of which line it lands on.
+        # danger.guard_unverified is the last line of the guard block
+        # (after the intro line and the path line -- see artifacts.py's
+        # "if tests:" branch); patch.py checks every line of the block,
+        # not just the first, before inserting it, so a marker-less line
+        # anywhere in that block would make the whole patch invalid the
+        # same way a stale "//" would. Checked on every line of the
+        # guarded skeleton, not just one, so a mutation that appends any
+        # of them via marker="" (or omits the kwarg) is caught regardless
+        # of which line it lands on.
         out = artifacts.skeleton("danger", _guarded_trace("billing/fee.py"))
         for line in out.splitlines():
             self.assertTrue(line.startswith("# "), repr(line))
@@ -123,6 +125,17 @@ class TestKeepMarkerOnGuardAndWarningLines(unittest.TestCase):
         out = artifacts.skeleton("danger", _guarded_trace("migrations/0001_fee.sql"))
         for line in out.splitlines():
             self.assertTrue(line.startswith("-- "), repr(line))
+
+    def test_guard_path_lands_on_its_own_marker_prefixed_line(self):
+        # A single co-changed test still gets its own line, not a
+        # sentence with the path folded into it -- see
+        # test_artifacts.py::TestDangerGuardLineSplitting for why.
+        out = artifacts.skeleton("danger", _guarded_trace("billing/fee.py"))
+        self.assertIn("#   billing/fee_test.py", out.splitlines())
+
+    def test_sql_guard_path_lands_on_its_own_marker_prefixed_line(self):
+        out = artifacts.skeleton("danger", _guarded_trace("migrations/0001_fee.sql"))
+        self.assertIn("--   billing/fee_test.py", out.splitlines())
 
 
 class TestKeepMarkerIsLanguageIndependent(unittest.TestCase):
@@ -156,10 +169,10 @@ class TestKeepMarkerIsLanguageIndependent(unittest.TestCase):
 
     def test_en_and_ko_agree_on_marker_for_guarded_shape_too(self):
         """Same check as the unguarded case above, but for the guarded
-        shape (danger.guard plus danger.guard_unverified): the unguarded
-        fixture only ever exercises the single-line danger.warning branch,
-        so it cannot catch a marker missing from either of the two lines
-        the guarded branch adds instead.
+        shape (the intro line, one path line, and danger.guard_unverified):
+        the unguarded fixture only ever exercises the single-line
+        danger.warning branch, so it cannot catch a marker missing from
+        any of the three lines the guarded branch adds instead.
         """
         en = artifacts.skeleton("danger", _guarded_trace("billing/fee.py"), lang="en")
         ko = artifacts.skeleton("danger", _guarded_trace("billing/fee.py"), lang="ko")

@@ -425,6 +425,37 @@ class TestRefusals(_FixtureCase):
         refused = self._refuse(info, _verdict(self.info["sha"]))
         self.assertEqual(refused.code, "no-snippet")
 
+    def test_form_feed_far_past_the_snippet_window_is_refused(self):
+        """I2: before `trace.py` detected the form feed itself, only the
+        line-number disagreement it causes (`str.splitlines()` treats a
+        form feed as a line break; `patch.py`'s `"\\n"`-only split does
+        not) could trigger a refusal, and only when that disagreement fell
+        inside the snippet's own recorded window. This fixture's form feed
+        sits seventeen lines past the target (well outside the window), so
+        before this fix the window matched the working tree by
+        coincidence and a patch was built anyway. It must now refuse
+        unconditionally: `trace.py` marks the snippet unavailable the
+        moment it sees the form feed, regardless of where it sits."""
+        info = self.trace_for("form_feed")
+        self.assertEqual(info["snippet"],
+                         {"available": False, "reason": "irregular-line-break"})
+        refused = self._refuse(info, _verdict(self.info["sha"]))
+        self.assertEqual(refused.code, "no-snippet")
+
+    def test_vertical_tab_far_past_the_snippet_window_is_refused(self):
+        """N2: the original I2 fix tested for "\\x0c" (form feed) alone,
+        but `str.splitlines()` treats eight other characters as line
+        breaks the same way, and a plain "\\n" split treats none of them
+        specially. This is the identical far-divergence shape as
+        `test_form_feed_far_past_the_snippet_window_is_refused`, with a
+        vertical tab instead: it must refuse the same way, not just for
+        the one character the original fix happened to name."""
+        info = self.trace_for("vtab")
+        self.assertEqual(info["snippet"],
+                         {"available": False, "reason": "irregular-line-break"})
+        refused = self._refuse(info, _verdict(self.info["sha"]))
+        self.assertEqual(refused.code, "no-snippet")
+
     def test_unknown_extension_is_refused_rather_than_left_markerless(self):
         info = self.trace_for("docs")
         refused = self._refuse(info, _verdict(self.info["sha"]))
@@ -629,6 +660,59 @@ class TestRefusals(_FixtureCase):
         refused = self._refuse(
             info, _verdict_without_artifact("deadbee" + "0" * 33))
         self.assertEqual(refused.code, "not-a-comment")
+
+    def test_ambiguous_no_evidence_citation_is_refused(self):
+        """A verdict with no evidence at all, against a trace with more
+        than one introduction_candidates entry, is the exact shape the
+        0.9.2 field run got wrong: skeleton() used to fall back to the
+        chronologically oldest candidate and build a confident KEEP
+        comment naming it, citing a commit that might have nothing to do
+        with the target. artifacts.py now routes this through the same
+        unresolved-citation warning an unresolved ref gets (see
+        tests/test_artifacts_ambiguous_citation.py), and that text is not
+        a comment, so patch.py must refuse it the same way."""
+        info = self.trace_for("python")
+        info["introduction_candidates"] = info["introduction_candidates"] + [{
+            "sha": "b1b1b1b" + "1" * 33, "subject": "unrelated change",
+            "date": "2020-01-01T00:00:00+00:00", "author": "Someone",
+            "author_email": "someone@example.com", "why": "pickaxe",
+        }]
+        refused = self._refuse(info, {"grade": "danger"})
+        self.assertEqual(refused.code, "not-a-comment")
+
+    def test_not_a_comment_message_names_all_three_causes(self):
+        """I4: the message used to name two causes ("its citation resolves
+        to no commit in this trace ... or to no commit tagged as the
+        introduction"), and both were false for the ambiguous case above
+        (no citation was made at all). Pinned verbatim so a future edit
+        that drops the third cause, or any of the other two, is caught."""
+        info = self.trace_for("python")
+        refused = self._refuse(
+            info, _verdict_without_artifact("deadbee" + "0" * 33))
+        self.assertEqual(str(refused), (
+            "The keep comment for this verdict is not a comment: at "
+            "least one of its lines does not start with #. Either the "
+            "verdict's own artifact content is not comment lines in "
+            "this file's syntax, or (when it carries none) its citation "
+            "resolves to no commit in this trace, resolves to no commit "
+            "tagged as the introduction, or was never made at all while "
+            "the trace offered more than one introduction candidate to "
+            "choose from. It cannot be inserted into source. Run "
+            "artifacts.py to read what it says and act on that instead."
+        ))
+
+    def test_not_a_comment_message_is_translated(self):
+        info = self.trace_for("python")
+        refused = self._refuse(
+            info, _verdict_without_artifact("deadbee" + "0" * 33), lang="ko")
+        self.assertEqual(str(refused), (
+            "이 검증(verdict)의 KEEP 주석이 주석이 아닙니다. #로 시작하지 않는 줄이 "
+            "있습니다. 검증의 artifact content가 이 파일 문법의 주석 줄이 아니거나, "
+            "content가 없는 경우라면 인용한 커밋이 이 trace에 없거나, 도입 커밋으로 "
+            "표시된 것이 없거나, 후보가 여럿인데도 근거로 아무 커밋도 인용하지 않은 "
+            "경우입니다. 소스에 넣을 수 없으니 artifacts.py를 실행해 내용을 읽고 "
+            "그에 따라 처리하세요."
+        ))
 
     def test_malformed_trace_is_refused(self):
         refused = self._refuse({"target": {}}, _verdict(self.info["sha"]))

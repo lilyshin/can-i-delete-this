@@ -174,7 +174,8 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
     notes = ["block comments (/* ... */) are detected for C-family languages "
              "and sql; doc comments (/** ... */) are discarded whole"]
     counts = {"scanned": 0, "unsupported": 0, "vendored": 0, "generated": 0,
-              "too_large": 0, "missing_at_head": 0, "not_reached": 0}
+              "too_large": 0, "missing_at_head": 0, "not_reached": 0,
+              "binary": 0, "irregular_line_break": 0}
     candidates = []
     cache = {}
     cap_reached = False
@@ -188,12 +189,42 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
             counts[reason] += 1
             continue
         try:
-            text = gitq.run_git(repo, ["show", "HEAD:" + file_path])
+            raw = gitq.run_git_bytes(repo, ["show", "HEAD:" + file_path])
         except RuntimeError:
             counts["missing_at_head"] += 1
             continue
-        if len(text) > MAX_FILE_BYTES:
+        # Measured on the bytes actually read, not on the decoded string:
+        # a multi-byte character makes the two lengths disagree, and the
+        # bytes are what a caller reading the blob directly would see.
+        if len(raw) > MAX_FILE_BYTES:
             counts["too_large"] += 1
+            continue
+        if b"\x00" in raw:
+            # git's own convention: a NUL byte means binary. Checked
+            # before decoding, the same order trace.py's own snippet
+            # reader uses for the same reason (see gitq.run_git_bytes).
+            counts["binary"] += 1
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            counts["binary"] += 1
+            continue
+        if gitq.has_splitlines_divergence(text):
+            # `scanner.find_blocks` below numbers this file's lines with
+            # `text.splitlines()`, and `gitq.blame_shas` numbers the same
+            # file with git's own "\n"-only `-L` counting; a character
+            # that makes the two disagree (see `gitq.has_splitlines_divergence`)
+            # would report a candidate at one set of line numbers and
+            # blame a different set. Renumbering to agree with git would
+            # mean recomputing the block boundaries, the blame range and
+            # the excerpt all at once, which is a feature to build
+            # correctly, not a release-gate fix; refusing to report this
+            # file at all is the same stance `patch.py` takes on the
+            # identical hazard (see docs/stability.md's known-limitation
+            # entry), applied here as a skip instead of a refusal since
+            # there is no single verdict to refuse.
+            counts["irregular_line_break"] += 1
             continue
         counts["scanned"] += 1
         marker = scanner.marker_for(file_path)
@@ -265,6 +296,13 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
     if counts["missing_at_head"]:
         notes.append("{} tracked file(s) are not present at HEAD".format(
             counts["missing_at_head"]))
+    if counts["binary"]:
+        notes.append("{} file(s) could not be read as text and were "
+                     "skipped".format(counts["binary"]))
+    if counts["irregular_line_break"]:
+        notes.append(
+            "{} file(s) contain a character that makes their line numbers "
+            "unreliable and were skipped".format(counts["irregular_line_break"]))
 
     return {
         "target": {"repo": repo, "path": path},
@@ -277,6 +315,8 @@ def scan(repo, path, *, min_lines=None, max_candidates=200, now=None):
             "files_skipped_too_large": counts["too_large"],
             "files_missing_at_head": counts["missing_at_head"],
             "files_not_reached": counts["not_reached"],
+            "files_skipped_binary": counts["binary"],
+            "files_skipped_irregular_line_break": counts["irregular_line_break"],
             "min_lines": min_lines,
             "max_candidates": max_candidates,
             "candidate_cap_reached": cap_reached,

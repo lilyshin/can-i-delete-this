@@ -79,6 +79,20 @@ class TestSnippetDegradesCleanly(unittest.TestCase):
         self.assertFalse(snippet["available"])
         self.assertEqual(snippet["reason"], "binary")
 
+    def test_undecodable_file_with_no_nul_byte_is_still_binary(self):
+        # The gitq.run_git_bytes fix for the lone-CR finding moved the
+        # NUL check to run on raw bytes before decoding is even
+        # attempted (see trace.py's `_read_snippet_source`); this pins
+        # that a decode failure with no NUL byte at all still reaches
+        # "binary" through the separate `UnicodeDecodeError` branch, not
+        # just through the NUL check `build_binary_target`'s content
+        # happens to trip first.
+        with tempfile.TemporaryDirectory() as tmp2:
+            info = make_fixture_repo.build_undecodable_no_nul_target(tmp2)
+            snippet = tracer._compute_snippet(info["repo"], info["path"], info["line"], info["line"])
+        self.assertFalse(snippet["available"])
+        self.assertEqual(snippet["reason"], "binary")
+
     def test_none_of_the_degraded_cases_raise_through_the_full_trace(self):
         # Full trace() must not crash even though its own target path is
         # perfectly fine; this pins that _compute_snippet's degraded

@@ -83,6 +83,7 @@ Do not add a rule for a failure mode you have not observed; see
 - **Everything you submit can be in Korean or English, whichever you
   write faster.** Issues, PR descriptions, review comments, commit
   messages: 🇰🇷 한국어로 쓰셔도 됩니다. 오히려 좋습니다 (the maintainer
-  reads Korean first). The existing commit history uses English subjects with
-  Korean bodies; matching that is appreciated but a fully Korean commit
-  message will not get a PR rejected.
+  reads Korean first). Current practice writes both the subject and the
+  body in Korean, with only the conventional type prefix (`fix:`,
+  `feat:`, `chore:`) in English; matching that is appreciated but an
+  entirely English commit message will not get a PR rejected either.

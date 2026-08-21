@@ -102,6 +102,23 @@ class TestChecklistShape(unittest.TestCase):
         out = artifacts.scan_checklist(_scan_data())
         self.assertIn("1710", out)
 
+    def test_scope_counts_binary_and_irregular_line_break(self):
+        """scan.py의 네 번째 라운드에서 추가된 두 스킵 사유: 텍스트로 디코드되지
+        않는 파일과, str.splitlines()가 git의 \\n 기준 줄 세기와 어긋나는 문자를
+        담은 파일. 체크리스트가 빠뜨리면 스캔 범위가 실제보다 적게 보고된다."""
+        out = artifacts.scan_checklist(_scan_data(
+            files_skipped_binary=4, files_skipped_irregular_line_break=5))
+        self.assertIn("4 not readable as text", out)
+        self.assertIn("5 skipped for unreliable line numbers", out)
+        # total = 416 + 1294 + 0(vendored) + 0(generated) + 4(binary) + 5(irregular) = 1719
+        self.assertIn("1719", out)
+
+    def test_scope_total_is_unchanged_for_a_scan_without_the_two_newest_keys(self):
+        """이전 라운드까지의 스캔 JSON에는 이 두 키가 없다. 없으면 0으로 읽고
+        총계는 그대로여야 한다."""
+        out = artifacts.scan_checklist(_scan_data())
+        self.assertIn("1710", out)
+
     def test_cap_is_disclosed(self):
         out = artifacts.scan_checklist(_scan_data(candidate_cap_reached=True))
         self.assertIn("200", out)
@@ -288,6 +305,13 @@ class TestKorean(unittest.TestCase):
     def test_excerpt_disclosure_exists_in_korean_too(self):
         out = artifacts.scan_checklist(_scan_data(), lang="ko")
         self.assertIn("스캔한 저장소에서 그대로 가져온 소스 코드", out)
+
+    def test_binary_and_irregular_line_break_wording_exists_in_korean_too(self):
+        out = artifacts.scan_checklist(_scan_data(
+            files_skipped_binary=4, files_skipped_irregular_line_break=5),
+            lang="ko")
+        self.assertIn("텍스트로 읽을 수 없음 4개", out)
+        self.assertIn("줄 번호를 믿을 수 없어 건너뜀 5개", out)
 
 
 if __name__ == "__main__":

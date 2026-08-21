@@ -65,7 +65,8 @@ class TestSelectNeedlesStopwordsAndFallback(unittest.TestCase):
 
     def test_stopword_is_dropped(self):
         repo = self._repo_with_line("    return order_total_with_vat")
-        path_needles, repo_needles, notes = tracer._select_needles(repo, "a.py", 2, 2)
+        path_needles, repo_needles, notes, skipped = tracer._select_needles(repo, "a.py", 2, 2)
+        self.assertFalse(skipped)
         self.assertNotIn("return", [n.lower() for n in path_needles])
         self.assertIn("order_total_with_vat", path_needles)
         # Nothing was stopworded away entirely, so no fallback note fires.
@@ -73,13 +74,14 @@ class TestSelectNeedlesStopwordsAndFallback(unittest.TestCase):
 
     def test_rare_identifier_is_preferred_over_a_stopword(self):
         repo = self._repo_with_line("    return order_total_with_vat")
-        path_needles, _, _ = tracer._select_needles(repo, "a.py", 2, 2)
+        path_needles, _, _, _ = tracer._select_needles(repo, "a.py", 2, 2)
         self.assertEqual(path_needles[0], "order_total_with_vat")
 
     def test_fallback_when_every_token_is_a_stopword(self):
         # "return" and "true" are both in _STOPWORDS; nothing survives.
         repo = self._repo_with_line("    return true")
-        path_needles, repo_needles, notes = tracer._select_needles(repo, "a.py", 2, 2)
+        path_needles, repo_needles, notes, skipped = tracer._select_needles(repo, "a.py", 2, 2)
+        self.assertFalse(skipped)
         # Old behavior: needles are still produced, not an empty list.
         self.assertTrue(path_needles)
         self.assertIn("return", [n.lower() for n in path_needles])

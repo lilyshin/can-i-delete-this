@@ -29,6 +29,41 @@ class TestReadOnlyGuard(unittest.TestCase):
             self.assertEqual(len(out.strip()), 40)
 
 
+class TestRunGitBytes(unittest.TestCase):
+    """`run_git_bytes` (added for trace.py's line-break-divergence fix,
+    see test_trace_line_break_divergence.py) shares `run_git`'s guard
+    through the same `_run_git_subprocess` helper; this pins that the
+    guard actually still applies to the new entry point, not just to
+    `run_git`, and that the one thing `run_git_bytes` exists for --
+    stdout bytes with no universal-newline translation -- actually
+    holds."""
+
+    def test_write_commands_are_refused(self):
+        for cmd in ["reset", "checkout", "rebase", "push", "commit",
+                    "stash", "branch", "merge", "cherry-pick", "clean"]:
+            with self.assertRaises(gitq.GitWriteAttempt):
+                gitq.run_git_bytes("/tmp", [cmd, "--hard"])
+
+    def test_returns_bytes_not_str(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_f1(tmp)
+            out = gitq.run_git_bytes(info["repo"], ["rev-parse", "HEAD"])
+            self.assertIsInstance(out, bytes)
+            self.assertEqual(len(out.strip()), 40)
+
+    def test_a_lone_carriage_return_survives_undisturbed(self):
+        # The one guarantee `run_git` cannot make: `run_git`'s text mode
+        # rewrites a lone "\r" to "\n" via universal-newline translation
+        # before a caller ever sees it (see `run_git_bytes`'s docstring).
+        # `run_git_bytes` must hand back the byte git actually stored.
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_line_break_divergence(tmp, divergent=b"\r")
+            raw = gitq.run_git_bytes(info["repo"], ["show", "HEAD:" + info["path"]])
+            self.assertIn(b"\r", raw)
+            translated = gitq.run_git(info["repo"], ["show", "HEAD:" + info["path"]])
+            self.assertNotIn("\r", translated)
+
+
 class TestCommitMeta(unittest.TestCase):
     def test_parses_subject_and_stats(self):
         with tempfile.TemporaryDirectory() as tmp:

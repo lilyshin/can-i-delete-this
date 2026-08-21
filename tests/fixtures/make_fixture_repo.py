@@ -852,6 +852,167 @@ def build_binary_target(dest: str) -> dict:
     return {"repo": str(repo), "path": "blob.bin", "line": 1, "sha": sha}
 
 
+def build_undecodable_no_nul_target(dest: str) -> dict:
+    """A target path whose content at HEAD fails to decode as UTF-8 but
+    contains no NUL byte at all, for testing that trace.py's snippet
+    computation reaches its `"binary"` reason through the decode-failure
+    path specifically, not only through the NUL-byte check that runs
+    first (see `build_binary_target`, whose content trips the NUL check
+    before decoding is ever attempted). `0xff` is not a valid UTF-8
+    leading byte anywhere, and the content below has none of the NUL
+    bytes `build_binary_target`'s does.
+    """
+    repo = _init(dest, "undecodable_no_nul_target")
+    target = repo / "blob_no_nul.bin"
+    target.write_bytes(b"abc\xffdef\n")
+    sha = _commit(repo, "feat: add undecodable blob", "2021-01-01T10:00:00")
+    return {"repo": str(repo), "path": "blob_no_nul.bin", "line": 1, "sha": sha}
+
+
+def build_line_break_divergence(dest: str, *, name: str = "line_break_divergence",
+                                 divergent: bytes = b"") -> dict:
+    """A file with `divergent` bytes spliced between two short lines near
+    the top, and a target several lines further down -- for testing
+    trace.py's snippet reader against the real git-read path (not just
+    the pure `gitq.has_splitlines_divergence` predicate in isolation), for
+    each of the nine characters that make `str.splitlines()` disagree
+    with the plain "\\n" split `patch.py` and `git apply` use, plus the
+    negative controls that must NOT be flagged.
+
+    `divergent=b""` (the default) is the plain-LF negative control: no
+    divergent bytes at all, still an ordinary multi-line file. Passing
+    `b"\\r\\n"` is the CRLF negative control: a real line ending, not a
+    lone divergent character, so a Windows-authored file must not be
+    refused either. Passing any single one of `gitq`'s
+    `_SPLITLINES_ONLY_BREAKS` characters, or a lone `b"\\r"`, is the
+    positive case: since the divergence sits near the top and the target
+    sits near the bottom, this always exercises the "before the target"
+    position, the one that actually shifts every recorded line number
+    downstream of it.
+
+    The target line number is computed from `divergent`'s own byte
+    content rather than assumed, since `divergent` can itself contain a
+    "\\n" (as `b"\\r\\n"` does), changing how many git-counted lines the
+    prefix chunk becomes.
+    """
+    repo = _init(dest, name)
+    target = repo / "m.py"
+    prefix = b"a = 1" + divergent + b"b = 2\n"
+    filler = b"".join("v{:02d} = {}\n".format(i, i).encode() for i in range(3, 9))
+    content = prefix + filler + b"TARGET = 42\n"
+    target.write_bytes(content)
+    sha = _commit(repo, "feat: add stuff", "2021-01-01T10:00:00")
+    lines = content.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    target_line = len(lines)  # "TARGET = 42" is always the last real line
+    return {"repo": str(repo), "path": "m.py", "line": target_line, "sha": sha}
+
+
+def build_scan_line_break_divergence(dest: str, *,
+                                      name: str = "scan_line_break_divergence",
+                                      divergent: bytes = b"") -> dict:
+    """The same shape as `build_line_break_divergence`, but with a real
+    commented-out block (three code-shaped lines, meeting
+    `scanner.MIN_BLOCK_LINES`) after the divergent bytes instead of a
+    single bare target line -- for testing `scan.py`'s handling of the
+    same hazard, which needs a block `scanner.find_blocks` can actually
+    detect, not just a line number to compare against.
+
+    Same `divergent` semantics as `build_line_break_divergence`:
+    `b""` is the plain-LF negative control, `b"\\r\\n"` is the CRLF
+    negative control, any single `gitq._SPLITLINES_ONLY_BREAKS` character
+    or a lone `b"\\r"` is the positive case, always positioned before the
+    block so it exercises the same "before the target" shift.
+
+    Returns `block_start`/`block_end`, git's own `"\\n"`-only line numbers
+    for the block (1-based, inclusive) -- the numbers a caller should see
+    if the file is scanned at all, computed independently of whatever
+    `scanner.find_blocks` itself would compute, so a test comparing the
+    two is not just checking the function against itself.
+    """
+    repo = _init(dest, name)
+    target = repo / "m.py"
+    prefix = b"a = 1" + divergent + b"b = 2\n"
+    block = (
+        b"# old_call_one()\n"
+        b"# old_call_two()\n"
+        b"# old_call_three()\n"
+    )
+    content = prefix + block + b"def keep():\n    pass\n"
+    target.write_bytes(content)
+    sha = _commit(repo, "feat: add stuff", "2021-01-01T10:00:00")
+
+    def _git_line_count(chunk: bytes) -> int:
+        parts = chunk.split(b"\n")
+        if parts and parts[-1] == b"":
+            parts.pop()
+        return len(parts)
+
+    prefix_lines = _git_line_count(prefix)
+    block_start = prefix_lines + 1
+    block_end = prefix_lines + 3
+    return {"repo": str(repo), "path": "m.py", "sha": sha,
+            "block_start": block_start, "block_end": block_end}
+
+
+def build_pickaxe_wrong_line_attribution(dest: str, *,
+                                          name: str = "pickaxe_wrong_line_attribution",
+                                          divergent: bytes = b"\r") -> dict:
+    """A repo shaped to show a line-break divergence in the target file
+    reaching a specific wrong commit through pickaxe, not just a weaker
+    search: an older, unrelated commit (`spurious_sha`) plants a rare
+    token in a different file; the target file's real content has none
+    of that token anywhere, but a divergent character positioned before
+    the target shifts `str.splitlines()` by exactly one line, so a
+    caller asking for the target's own (git-`"\\n"`-only) line number
+    gets back the spurious token instead. Without the guard this fixture
+    is built to test, `_select_needles` would hand that token to pickaxe,
+    which (searching repo-wide, unscoped by path) finds `spurious_sha`
+    and adds it to `introduction_candidates` with `why: "pickaxe"` --
+    indistinguishable from a genuine hit, and citable in a verdict.
+
+    `divergent=b"\\r\\n"` or `b""` builds the CRLF/plain-LF negative
+    controls instead: no line shift, so the token a caller asks about is
+    the real target's own, `SPURIOUS_TOKEN_ABCDEFGH` never enters the
+    search, and pickaxe (if it runs at all) has nothing wrong to find.
+    Any other single divergent character (any of `gitq._SPLITLINES_ONLY_BREAKS`,
+    or the lone `b"\\r"` default) produces the same one-line shift and
+    reuses the positive-case content below; only `b""` and `b"\\r\\n"`
+    are exempt, since neither one makes `str.splitlines()` count a line
+    `"\\n"`-splitting does not.
+    """
+    repo = _init(dest, name)
+    (repo / "other.py").write_text(
+        "def unrelated():\n    return SPURIOUS_TOKEN_ABCDEFGH\n")
+    spurious_sha = _commit(repo, "feat: add an unrelated helper",
+                            "2020-01-01T10:00:00")
+
+    target = repo / "m.py"
+    prefix = b"x = 1\n" + b"a = 1" + divergent + b"b = 2\n"
+    if divergent not in (b"", b"\r\n"):
+        # The positive case: any single divergent character turns
+        # "a = 1<char>b = 2" into two str.splitlines() lines where git
+        # counts one, so asking for the real target's line lands one
+        # splitlines() line short -- placed on the spurious token below,
+        # planted at exactly that offset.
+        content = (prefix + b"SPURIOUS_TOKEN_ABCDEFGH = 1\n"
+                   + b"REAL_TARGET_TOKEN_QRSTUVWX = 42\n")
+    else:
+        # Negative controls: no shift, so nothing needs to be planted at
+        # an offset; the real target is the only thing at its own line.
+        content = prefix + b"REAL_TARGET_TOKEN_QRSTUVWX = 42\n"
+    target.write_bytes(content)
+    sha = _commit(repo, "feat: add real target", "2021-01-01T10:00:00")
+
+    lines = content.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    target_line = len(lines)  # REAL_TARGET_TOKEN_QRSTUVWX is always last
+    return {"repo": str(repo), "path": "m.py", "line": target_line,
+            "sha": sha, "spurious_sha": spurious_sha}
+
+
 def build_korean_paths(dest: str) -> dict:
     """Korean commit messages and a Korean target filename, co-changed with
     a Korean-named test file under an ASCII `tests/` directory.
@@ -1297,6 +1458,13 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
     holding a NUL byte) and `docs/fee.rst` (an extension no marker is
     known for) exist to be refused.
 
+    `form_feed.py` holds a form feed character seventeen lines past its
+    target, well outside the snippet's own recorded window, to reproduce
+    I2's finding: the refusal must not depend on where in the file the
+    divergent character happens to sit. `vtab.py` is the identical shape
+    with a vertical tab instead, for N2's finding that the fix must not
+    depend on which of the nine splitlines-only-break characters it is.
+
     `Ledger.kt` holds two methods of identical shape whose guard line is
     the bare `return` this project's Kotlin target already is, so a test
     can swap them (an ordinary refactor) and leave a line that matches the
@@ -1478,6 +1646,69 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
         b"    return order.total\r\n"                     # 8
     )
 
+    # A form feed sitting well past the snippet's own recorded window
+    # (target at line 3, `_SNIPPET_CONTEXT` reaches to line 7, form feed
+    # at line 20 of 22): I2's exact far-divergence reproduction. Before
+    # trace.py detected the form feed itself, `str.splitlines()`'s
+    # line-break-on-form-feed only mis-numbered lines from 20 onward, so
+    # the recorded window (lines 1-7) matched the working tree by
+    # coincidence and a patch was built anyway.
+    form_feed = repo / "form_feed.py"
+    form_feed.write_text(
+        "def charge(order):\n"                           # 1
+        "    if order.already_charged:\n"                # 2
+        "        return {'status': 'duplicate'}\n"       # 3  <- target
+        "    order.mark_processed()\n"                   # 4
+        "    return order.total\n"                       # 5
+        "\n"                                             # 6
+        "\n"                                             # 7
+        "def refund(order):\n"                           # 8
+        "    return -order.total\n"                       # 9
+        "\n"                                             # 10
+        "\n"                                             # 11
+        "def audit_note():\n"                            # 12
+        "    pass\n"                                      # 13
+        "\n"                                             # 14
+        "\n"                                             # 15
+        "def another_helper():\n"                        # 16
+        "    pass\n"                                      # 17
+        "\n"                                             # 18
+        "\n"                                             # 19
+        "def report():\x0c\n"                             # 20  <- form feed
+        "    pass\n"                                      # 21
+        "    return None\n"                               # 22
+    )
+
+    # Same far-divergence shape as `form_feed.py`, with a vertical tab
+    # instead of a form feed: N2's finding was that the fix detected only
+    # "\x0c" and left the other eight splitlines-only-break characters
+    # producing the identical hazard.
+    vtab = repo / "vtab.py"
+    vtab.write_text(
+        "def charge(order):\n"                           # 1
+        "    if order.already_charged:\n"                # 2
+        "        return {'status': 'duplicate'}\n"       # 3  <- target
+        "    order.mark_processed()\n"                   # 4
+        "    return order.total\n"                       # 5
+        "\n"                                             # 6
+        "\n"                                             # 7
+        "def refund(order):\n"                           # 8
+        "    return -order.total\n"                       # 9
+        "\n"                                             # 10
+        "\n"                                             # 11
+        "def audit_note():\n"                            # 12
+        "    pass\n"                                      # 13
+        "\n"                                             # 14
+        "\n"                                             # 15
+        "def another_helper():\n"                        # 16
+        "    pass\n"                                      # 17
+        "\n"                                             # 18
+        "\n"                                             # 19
+        "def report():\x0b\n"                             # 20  <- vertical tab
+        "    pass\n"                                      # 21
+        "    return None\n"                               # 22
+    )
+
     korean = repo / "결제" / "수수료.py"
     korean.parent.mkdir(parents=True)
     korean.write_text(
@@ -1515,6 +1746,10 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
         "binary": {"path": "blob.py", "start": 1, "end": 1, "indent": ""},
         "nul": {"path": "nul.py", "start": 2, "end": 2, "indent": "    "},
         "crlf": {"path": "crlf.py", "start": 6, "end": 6,
+                  "indent": "        "},
+        "form_feed": {"path": "form_feed.py", "start": 3, "end": 3,
+                       "indent": "        "},
+        "vtab": {"path": "vtab.py", "start": 3, "end": 3,
                   "indent": "        "},
         "korean": {"path": "결제/수수료.py", "start": 6, "end": 6,
                     "indent": "        "},
