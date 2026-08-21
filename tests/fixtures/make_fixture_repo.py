@@ -956,6 +956,63 @@ def build_scan_line_break_divergence(dest: str, *,
             "block_start": block_start, "block_end": block_end}
 
 
+def build_pickaxe_wrong_line_attribution(dest: str, *,
+                                          name: str = "pickaxe_wrong_line_attribution",
+                                          divergent: bytes = b"\r") -> dict:
+    """A repo shaped to show a line-break divergence in the target file
+    reaching a specific wrong commit through pickaxe, not just a weaker
+    search: an older, unrelated commit (`spurious_sha`) plants a rare
+    token in a different file; the target file's real content has none
+    of that token anywhere, but a divergent character positioned before
+    the target shifts `str.splitlines()` by exactly one line, so a
+    caller asking for the target's own (git-`"\\n"`-only) line number
+    gets back the spurious token instead. Without the guard this fixture
+    is built to test, `_select_needles` would hand that token to pickaxe,
+    which (searching repo-wide, unscoped by path) finds `spurious_sha`
+    and adds it to `introduction_candidates` with `why: "pickaxe"` --
+    indistinguishable from a genuine hit, and citable in a verdict.
+
+    `divergent=b"\\r\\n"` or `b""` builds the CRLF/plain-LF negative
+    controls instead: no line shift, so the token a caller asks about is
+    the real target's own, `SPURIOUS_TOKEN_ABCDEFGH` never enters the
+    search, and pickaxe (if it runs at all) has nothing wrong to find.
+    Any other single divergent character (any of `gitq._SPLITLINES_ONLY_BREAKS`,
+    or the lone `b"\\r"` default) produces the same one-line shift and
+    reuses the positive-case content below; only `b""` and `b"\\r\\n"`
+    are exempt, since neither one makes `str.splitlines()` count a line
+    `"\\n"`-splitting does not.
+    """
+    repo = _init(dest, name)
+    (repo / "other.py").write_text(
+        "def unrelated():\n    return SPURIOUS_TOKEN_ABCDEFGH\n")
+    spurious_sha = _commit(repo, "feat: add an unrelated helper",
+                            "2020-01-01T10:00:00")
+
+    target = repo / "m.py"
+    prefix = b"x = 1\n" + b"a = 1" + divergent + b"b = 2\n"
+    if divergent not in (b"", b"\r\n"):
+        # The positive case: any single divergent character turns
+        # "a = 1<char>b = 2" into two str.splitlines() lines where git
+        # counts one, so asking for the real target's line lands one
+        # splitlines() line short -- placed on the spurious token below,
+        # planted at exactly that offset.
+        content = (prefix + b"SPURIOUS_TOKEN_ABCDEFGH = 1\n"
+                   + b"REAL_TARGET_TOKEN_QRSTUVWX = 42\n")
+    else:
+        # Negative controls: no shift, so nothing needs to be planted at
+        # an offset; the real target is the only thing at its own line.
+        content = prefix + b"REAL_TARGET_TOKEN_QRSTUVWX = 42\n"
+    target.write_bytes(content)
+    sha = _commit(repo, "feat: add real target", "2021-01-01T10:00:00")
+
+    lines = content.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    target_line = len(lines)  # REAL_TARGET_TOKEN_QRSTUVWX is always last
+    return {"repo": str(repo), "path": "m.py", "line": target_line,
+            "sha": sha, "spurious_sha": spurious_sha}
+
+
 def build_korean_paths(dest: str) -> dict:
     """Korean commit messages and a Korean target filename, co-changed with
     a Korean-named test file under an ASCII `tests/` directory.

@@ -156,15 +156,45 @@ def _cached_meta_and_noise(repo, sha, cache):
 
 
 def _tokens_from_target(repo, path, start, end):
-    """Every distinct token on the target lines, in first-seen order."""
-    text = gitq.run_git(repo, ["show", "HEAD:" + path])
+    """Every distinct token on the target lines, in first-seen order, as
+    `(tokens, divergent)`. `divergent` is True, with `tokens` `None`,
+    when the file has a character that makes `str.splitlines()` disagree
+    with git's own line count -- see `gitq.has_splitlines_divergence`.
+
+    Reads through `gitq.run_git_bytes`, not `gitq.run_git`, for the same
+    reason `_read_snippet_source` does: `run_git`'s text mode translates
+    away the one signal a lone "\\r" leaves behind, and even the eight
+    characters that survive translation would still make
+    `text.splitlines()` here count more lines than `start`/`end` (which
+    came from the caller counting the file the way git and an editor do,
+    not the way `str.splitlines()` does) actually span. A needle sliced
+    from the wrong line by that shift is not just a weaker search: it is
+    a token from code the target has nothing to do with, and pickaxe
+    finding a commit that touched *that* token adds it to
+    `introduction_candidates` with `why: "pickaxe"`, indistinguishable
+    from a genuine hit -- the same misattribution risk
+    `_read_snippet_source` refuses for the KEEP comment, reached by a
+    longer route through search instead of directly. Refusing to extract
+    a needle at all, rather than guessing which lines are really the
+    target's, is that same refusal applied here.
+
+    Still lets a missing path raise, unchanged from before this
+    function's return shape carried a second value: a target the caller
+    cannot even `show HEAD:<path>` for aborts the whole trace, same as
+    always, since needle selection is not a lower-stakes report addition
+    the way the snippet is.
+    """
+    raw = gitq.run_git_bytes(repo, ["show", "HEAD:" + path])
+    text = raw.decode("utf-8")
+    if gitq.has_splitlines_divergence(text):
+        return None, True
     lines = text.splitlines()[start - 1:end]
     found = []
     for line in lines:
         for token in _WORD.findall(line):
             if token not in found:
                 found.append(token)
-    return found
+    return found, False
 
 
 def _rank_needles(tokens):
@@ -184,7 +214,7 @@ def _rank_needles(tokens):
 def _select_needles(repo, path, start, end):
     """Pick pickaxe needles from the target lines' current content.
 
-    Returns (path_needles, repo_needles, notes):
+    Returns (path_needles, repo_needles, notes, pickaxe_skipped):
 
     - path_needles: up to `_PATH_SCOPED_NEEDLE_LIMIT` tokens for a
       path-scoped pickaxe search.
@@ -193,7 +223,13 @@ def _select_needles(repo, path, start, end):
       expensive, junk-prone half of the search.
     - notes: zero or more human-readable strings disclosing a deviation
       worth knowing about (tokens rejected as too common, a narrower
-      repo-wide needle set, or a stopword-fallback).
+      repo-wide needle set, a stopword-fallback, or the pickaxe skip
+      below).
+    - pickaxe_skipped: True when `_tokens_from_target` found the target
+      file has a line-break divergence and refused to extract a needle
+      at all (see that function's docstring); both `path_needles` and
+      `repo_needles` are `[]` in that case, so no pickaxe search runs at
+      all, and the caller records this in `limits` alongside `notes`.
 
     Selection: drop stopwords, rank the rest (see _rank_needles), then
     verify rarity for the top `_RARITY_PROBE_LIMIT` ranked tokens with
@@ -205,8 +241,18 @@ def _select_needles(repo, path, start, end):
     behavior (first tokens found, unfiltered) rather than returning no
     needles at all, and says so in `notes`.
     """
-    all_tokens = _tokens_from_target(repo, path, start, end)
+    all_tokens, divergent = _tokens_from_target(repo, path, start, end)
     notes = []
+
+    if divergent:
+        notes.append(
+            "pickaxe search skipped: this file has a character that "
+            "makes str.splitlines() disagree with git's own line count "
+            "(the same reason its code snippet is unavailable), so no "
+            "needle can be trusted to come from the target's own lines; "
+            "only blame and line-history candidates are included"
+        )
+        return [], [], notes, True
 
     candidates = [t for t in all_tokens if t.lower() not in _STOPWORDS]
     if not candidates:
@@ -217,7 +263,7 @@ def _select_needles(repo, path, start, end):
         )
         fallback = all_tokens[:5]
         return (fallback[:_PATH_SCOPED_NEEDLE_LIMIT],
-                fallback[:_REPO_WIDE_NEEDLE_LIMIT], notes)
+                fallback[:_REPO_WIDE_NEEDLE_LIMIT], notes, False)
 
     ranked = _rank_needles(candidates)
     probe_pool = ranked[:_RARITY_PROBE_LIMIT]
@@ -256,15 +302,16 @@ def _select_needles(repo, path, start, end):
             "cost".format(len(repo_needles), len(path_needles),
                           ", ".join(repo_needles))
         )
-    return path_needles, repo_needles, notes
+    return path_needles, repo_needles, notes, False
 
 
 def _read_snippet_source(repo, path):
     """The target file's content at HEAD, or why it could not be read.
 
     Deliberately separate from `_tokens_from_target`, which reads the same
-    `git show HEAD:<path>` shape for needle selection but is allowed to let
-    a RuntimeError propagate (a missing path there aborts the whole trace,
+    `git show HEAD:<path>` shape for needle selection and now shares this
+    function's own line-break-divergence check, but is still allowed to
+    let a missing path raise as a RuntimeError (aborts the whole trace,
     existing, unchanged behavior). The snippet is a lower-stakes addition
     to the report -- it must degrade to a short explanation instead of
     taking the rest of the trace down with it -- so it catches the same
@@ -525,7 +572,8 @@ def trace(repo, path, start, end, *, max_commits=5000, since=None,
     # because path-scoped already found something: a commit found
     # path-scoped is not evidence that nothing needed a repo-wide search
     # too (see the module-level note on cross-file moves).
-    path_needles, repo_needles, needle_notes = _select_needles(repo, path, start, end)
+    path_needles, repo_needles, needle_notes, pickaxe_skipped = _select_needles(
+        repo, path, start, end)
     notes.extend(needle_notes)
 
     # `commands` records the actual argv of every git search this trace
@@ -689,7 +737,8 @@ def trace(repo, path, start, end, *, max_commits=5000, since=None,
                    "truncated": total > max_commits,
                    "max_candidates": max_candidates,
                    "candidate_cap_reached": cap_state["hit"],
-                   "co_changed_per_commit": max_co_changed},
+                   "co_changed_per_commit": max_co_changed,
+                   "pickaxe_skipped_irregular_line_break": pickaxe_skipped},
         "notes": notes,
     }
 

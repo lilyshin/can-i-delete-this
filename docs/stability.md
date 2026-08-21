@@ -130,19 +130,26 @@ names no commit to attach the patch to.
   on its own but a plain `"\n"` split does not (vertical tab, form feed,
   three control-character separators, NEL, the two Unicode line/paragraph
   separators, or a lone carriage return not part of a CRLF pair) is
-  refused by `patch.py` permanently and skipped by `scan.py`, for the
-  same reason: `str.splitlines()` numbers a file one way; `patch.py`
-  counts lines by splitting on `"\n"` only, matching `git apply`, and
-  `git blame -L`'s own line ranges (which `scan.py` also relies on) count
-  the same way. The two would disagree on such a file, so both scripts
-  detect any of these characters themselves (`gitq.has_splitlines_divergence`)
-  rather than trust numbers that might already be wrong. `patch.py`
-  records the target's snippet as unavailable, which makes its
-  `no-snippet` check refuse unconditionally, rather than only when the
-  resulting line-number disagreement happens to fall inside the
-  snippet's own recorded window; `scan.py` skips the file outright
-  rather than report a commented-out block, or attribute it to a commit,
-  at numbers git itself would not agree with.
+  handled the same way everywhere this project reads such a file:
+  `str.splitlines()` numbers it one way; `patch.py` counts lines by
+  splitting on `"\n"` only, matching `git apply`, and `git blame -L`'s
+  own line ranges (which `scan.py` relies on, and which `trace.py`'s own
+  blame and line-history searches rely on too) count the same way. The
+  two would disagree on such a file, so every script that would
+  otherwise slice it by a Python-computed line number detects any of
+  these characters itself (`gitq.has_splitlines_divergence`) rather than
+  trust numbers that might already be wrong, and gives up only the part
+  of its own job that depends on those numbers: `patch.py` records the
+  target's snippet as unavailable, which makes its `no-snippet` check
+  refuse to build a patch at all, rather than only when the resulting
+  line-number disagreement happens to fall inside the snippet's own
+  recorded window; `scan.py` skips the file outright rather than report
+  a commented-out block, or attribute it to a commit, at numbers git
+  itself would not agree with; `trace.py` drops only its pickaxe search
+  for such a target, since a needle sliced from the wrong line is a
+  token from code the target has nothing to do with, while its blame and
+  line-history searches keep running unaffected, since neither slices
+  the file's content by a Python-computed line number at all.
 - The diff `patch.py` emits must be applied with `git apply` from the
   repository root. It is not applied for you.
 - A KEEP comment's line length depends on the target's own indentation,
