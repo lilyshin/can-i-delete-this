@@ -126,23 +126,37 @@ names no commit to attach the patch to.
 
 ## Known limitations
 
-- A file containing a form feed character is refused by `patch.py`
-  permanently. `str.splitlines()` (used to number the target's own
-  snippet) treats a form feed as a line break; `patch.py` counts lines by
-  splitting on `"\n"` only, matching `git apply`. The two would disagree
-  on such a file, so `trace.py` detects the form feed itself and records
-  the target's snippet as unavailable, which makes `patch.py` refuse
-  through its `no-snippet` check unconditionally, rather than only when
-  the resulting line-number disagreement happens to fall inside the
+- A file containing a character `str.splitlines()` treats as a line break
+  on its own but a plain `"\n"` split does not (vertical tab, form feed,
+  three control-character separators, NEL, the two Unicode line/paragraph
+  separators, or a lone carriage return not part of a CRLF pair) is
+  refused by `patch.py` permanently. `str.splitlines()` numbers the
+  target's own snippet; `patch.py` counts lines by splitting on `"\n"`
+  only, matching `git apply`. The two would disagree on such a file, so
+  `trace.py` detects any of these characters itself and records the
+  target's snippet as unavailable, which makes `patch.py` refuse through
+  its `no-snippet` check unconditionally, rather than only when the
+  resulting line-number disagreement happens to fall inside the
   snippet's own recorded window.
 - The diff `patch.py` emits must be applied with `git apply` from the
   repository root. It is not applied for you.
-- A KEEP comment can exceed a linter's maximum line length, on either of
-  the two lines that carry a fact rather than this project's wording: the
-  path line, when the repository's own paths are long, and the `KEEP:`
-  line, which carries the introducing commit's subject. Neither is ever
-  shortened to fit, because a shortened path or a truncated subject is no
-  longer the fact it is reporting. Every other line is this project's own
-  wording, and that wording is kept to 75 characters or fewer (leaving
-  room for a 4-space indent under a linter's typical 79-column default),
-  so the wording never causes the overage on its own.
+- A KEEP comment's line length depends on the target's own indentation,
+  and this project makes no promise that its own wording keeps a comment
+  under a linter's limit. That wording is capped at 75 characters
+  including the comment marker (`artifacts.py`'s `_STRINGS`, checked by a
+  test), and the longest it actually reaches, with the longest comment
+  marker this project knows about, is 74. But `patch.py` inserts the
+  wording at the target line's own indentation on top of the marker, so
+  a deeply indented target can still push even this capped wording past
+  a linter's default: an 8-space indent (an `if` inside a function, a
+  common shape in Python) turns that 74-character capped line into an
+  82-character one, past pycodestyle's 79-column default, with none of
+  that overage coming from a path. Three further kinds of line carry a
+  fact this project does not control the length of at all, and none of
+  them is ever shortened or truncated to fit: the path line, the
+  `KEEP:` line's commit subject, and any interpolated count (a capped
+  commit's true file total, a named-guard remainder).
+  One line is pure wording and is exempt from the 75-character cap
+  outright rather than measured against it: `danger.no_marker`, at 110
+  characters, because `patch.py` refuses a markerless file before that
+  line would ever reach a source file.
