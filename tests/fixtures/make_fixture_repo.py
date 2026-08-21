@@ -874,7 +874,7 @@ def build_line_break_divergence(dest: str, *, name: str = "line_break_divergence
     """A file with `divergent` bytes spliced between two short lines near
     the top, and a target several lines further down -- for testing
     trace.py's snippet reader against the real git-read path (not just
-    the pure `_has_splitlines_divergence` predicate in isolation), for
+    the pure `gitq.has_splitlines_divergence` predicate in isolation), for
     each of the nine characters that make `str.splitlines()` disagree
     with the plain "\\n" split `patch.py` and `git apply` use, plus the
     negative controls that must NOT be flagged.
@@ -883,7 +883,7 @@ def build_line_break_divergence(dest: str, *, name: str = "line_break_divergence
     divergent bytes at all, still an ordinary multi-line file. Passing
     `b"\\r\\n"` is the CRLF negative control: a real line ending, not a
     lone divergent character, so a Windows-authored file must not be
-    refused either. Passing any single one of trace.py's
+    refused either. Passing any single one of `gitq`'s
     `_SPLITLINES_ONLY_BREAKS` characters, or a lone `b"\\r"`, is the
     positive case: since the divergence sits near the top and the target
     sits near the bottom, this always exercises the "before the target"
@@ -907,6 +907,53 @@ def build_line_break_divergence(dest: str, *, name: str = "line_break_divergence
         lines.pop()
     target_line = len(lines)  # "TARGET = 42" is always the last real line
     return {"repo": str(repo), "path": "m.py", "line": target_line, "sha": sha}
+
+
+def build_scan_line_break_divergence(dest: str, *,
+                                      name: str = "scan_line_break_divergence",
+                                      divergent: bytes = b"") -> dict:
+    """The same shape as `build_line_break_divergence`, but with a real
+    commented-out block (three code-shaped lines, meeting
+    `scanner.MIN_BLOCK_LINES`) after the divergent bytes instead of a
+    single bare target line -- for testing `scan.py`'s handling of the
+    same hazard, which needs a block `scanner.find_blocks` can actually
+    detect, not just a line number to compare against.
+
+    Same `divergent` semantics as `build_line_break_divergence`:
+    `b""` is the plain-LF negative control, `b"\\r\\n"` is the CRLF
+    negative control, any single `gitq._SPLITLINES_ONLY_BREAKS` character
+    or a lone `b"\\r"` is the positive case, always positioned before the
+    block so it exercises the same "before the target" shift.
+
+    Returns `block_start`/`block_end`, git's own `"\\n"`-only line numbers
+    for the block (1-based, inclusive) -- the numbers a caller should see
+    if the file is scanned at all, computed independently of whatever
+    `scanner.find_blocks` itself would compute, so a test comparing the
+    two is not just checking the function against itself.
+    """
+    repo = _init(dest, name)
+    target = repo / "m.py"
+    prefix = b"a = 1" + divergent + b"b = 2\n"
+    block = (
+        b"# old_call_one()\n"
+        b"# old_call_two()\n"
+        b"# old_call_three()\n"
+    )
+    content = prefix + block + b"def keep():\n    pass\n"
+    target.write_bytes(content)
+    sha = _commit(repo, "feat: add stuff", "2021-01-01T10:00:00")
+
+    def _git_line_count(chunk: bytes) -> int:
+        parts = chunk.split(b"\n")
+        if parts and parts[-1] == b"":
+            parts.pop()
+        return len(parts)
+
+    prefix_lines = _git_line_count(prefix)
+    block_start = prefix_lines + 1
+    block_end = prefix_lines + 3
+    return {"repo": str(repo), "path": "m.py", "sha": sha,
+            "block_start": block_start, "block_end": block_end}
 
 
 def build_korean_paths(dest: str) -> dict:

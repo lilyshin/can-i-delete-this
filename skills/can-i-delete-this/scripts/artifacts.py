@@ -140,7 +140,9 @@ _STRINGS = {
         "scan.scope": "Scan scope: {scanned} of {total} files "
                        "({unsupported} skipped as unsupported, {vendored} vendored, "
                        "{generated} generated, {too_large} too large to read, "
-                       "{missing_at_head} missing at HEAD, {not_reached} never "
+                       "{missing_at_head} missing at HEAD, {binary} not readable "
+                       "as text, {irregular_line_break} skipped for unreliable "
+                       "line numbers, {not_reached} never "
                        "examined after the candidate cap).",
         "scan.cap": "Candidate cap of {cap} was reached; more may exist.",
         "scan.boundary": "Block comments (`/* ... */`) are detected for "
@@ -240,6 +242,8 @@ _STRINGS = {
         "scan.scope": "스캔 범위: 전체 {total}개 파일 중 {scanned}개 "
                        "(미지원 {unsupported}개, vendored {vendored}개, 생성물 {generated}개, "
                        "용량 초과 {too_large}개, HEAD에 없음 {missing_at_head}개 건너뜀, "
+                       "텍스트로 읽을 수 없음 {binary}개, 줄 번호를 믿을 수 없어 건너뜀 "
+                       "{irregular_line_break}개, "
                        "후보 상한 도달로 아예 열지 않음 {not_reached}개).",
         "scan.cap": "후보 상한 {cap}에 도달했습니다. 더 있을 수 있습니다.",
         "scan.boundary": "블록 주석(`/* ... */`)은 C 계열 언어와 sql에서 감지합니다. "
@@ -893,13 +897,18 @@ def scan_checklist(scan_data, *, lang="en"):
     generated = limits.get("files_skipped_generated") or 0
     too_large = limits.get("files_skipped_too_large") or 0
     missing_at_head = limits.get("files_missing_at_head") or 0
+    # Absent from an older scan.json that predates these two skip
+    # reasons, so `or 0` degrades exactly like `not_reached` below does
+    # for a scan.json that predates the candidate cap disclosure.
+    binary = limits.get("files_skipped_binary") or 0
+    irregular_line_break = limits.get("files_skipped_irregular_line_break") or 0
     # Files `ls-files` listed but the scan never opened, because the
     # candidate cap stopped it first. Counted in the total so the scope
     # sentence means "of everything tracked under this path", not "of
     # everything we happened to reach".
     not_reached = limits.get("files_not_reached") or 0
     total = (scanned + unsupported + vendored + generated + too_large
-             + missing_at_head + not_reached)
+             + missing_at_head + binary + irregular_line_break + not_reached)
 
     lines = []
     if candidates:
@@ -983,6 +992,7 @@ def scan_checklist(scan_data, *, lang="en"):
                      unsupported=unsupported, vendored=vendored,
                      generated=generated, too_large=too_large,
                      missing_at_head=missing_at_head,
+                     binary=binary, irregular_line_break=irregular_line_break,
                      not_reached=not_reached))
     if limits.get("candidate_cap_reached"):
         lines.append(_t(lang, "scan.cap", cap=limits.get("max_candidates")))

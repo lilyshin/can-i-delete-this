@@ -130,14 +130,19 @@ names no commit to attach the patch to.
   on its own but a plain `"\n"` split does not (vertical tab, form feed,
   three control-character separators, NEL, the two Unicode line/paragraph
   separators, or a lone carriage return not part of a CRLF pair) is
-  refused by `patch.py` permanently. `str.splitlines()` numbers the
-  target's own snippet; `patch.py` counts lines by splitting on `"\n"`
-  only, matching `git apply`. The two would disagree on such a file, so
-  `trace.py` detects any of these characters itself and records the
-  target's snippet as unavailable, which makes `patch.py` refuse through
-  its `no-snippet` check unconditionally, rather than only when the
+  refused by `patch.py` permanently and skipped by `scan.py`, for the
+  same reason: `str.splitlines()` numbers a file one way; `patch.py`
+  counts lines by splitting on `"\n"` only, matching `git apply`, and
+  `git blame -L`'s own line ranges (which `scan.py` also relies on) count
+  the same way. The two would disagree on such a file, so both scripts
+  detect any of these characters themselves (`gitq.has_splitlines_divergence`)
+  rather than trust numbers that might already be wrong. `patch.py`
+  records the target's snippet as unavailable, which makes its
+  `no-snippet` check refuse unconditionally, rather than only when the
   resulting line-number disagreement happens to fall inside the
-  snippet's own recorded window.
+  snippet's own recorded window; `scan.py` skips the file outright
+  rather than report a commented-out block, or attribute it to a commit,
+  at numbers git itself would not agree with.
 - The diff `patch.py` emits must be applied with `git apply` from the
   repository root. It is not applied for you.
 - A KEEP comment's line length depends on the target's own indentation,

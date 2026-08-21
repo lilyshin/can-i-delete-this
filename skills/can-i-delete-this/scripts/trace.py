@@ -259,36 +259,6 @@ def _select_needles(repo, path, start, end):
     return path_needles, repo_needles, notes
 
 
-# Every character `str.splitlines()` treats as a line break on its own
-# but a plain `split("\n")` does not (the eight-character set here is
-# exactly Python's own list minus "\n" and "\r\n", both of which the two
-# methods agree on): vertical tab, form feed, the three C1 separator
-# controls, NEL, and the two Unicode line/paragraph separators. A lone
-# "\r" not immediately followed by "\n" is the ninth case and is handled
-# separately below, since it depends on what follows it, not on its own
-# presence.
-_SPLITLINES_ONLY_BREAKS = frozenset(
-    "\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
-
-# A lone "\r" (one not part of a "\r\n" pair) is also a line break to
-# `str.splitlines()` but not to `split("\n")`; "\r\n" itself is a single
-# break to both, so it is excluded here rather than double-counted.
-_LONE_CR = re.compile(r"\r(?!\n)")
-
-
-def _has_splitlines_divergence(text):
-    """Whether `str.splitlines()` would number `text` differently from
-    splitting on "\\n" only (what `patch.py` does, matching `git apply`).
-
-    Used by `_read_snippet_source` below: any character this function
-    finds makes the line numbers `_compute_snippet` would otherwise
-    record untrustworthy, the same way a form feed alone used to.
-    """
-    if any(c in text for c in _SPLITLINES_ONLY_BREAKS):
-        return True
-    return bool(_LONE_CR.search(text))
-
-
 def _read_snippet_source(repo, path):
     """The target file's content at HEAD, or why it could not be read.
 
@@ -306,7 +276,7 @@ def _read_snippet_source(repo, path):
     Reads through `gitq.run_git_bytes`, not `gitq.run_git`: `run_git`'s
     text mode runs Python's universal-newline translation, which silently
     rewrites a lone "\\r" to "\\n" before this function -- or
-    `_has_splitlines_divergence` below -- ever sees it, so a real
+    `gitq.has_splitlines_divergence` below -- ever sees it, so a real
     divergence between `str.splitlines()` and `patch.py`'s "\\n"-only
     split would already have been erased by the time it could be
     detected. Decoding the raw bytes ourselves is what lets that
@@ -330,10 +300,10 @@ def _read_snippet_source(repo, path):
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         return None, "binary"
-    if _has_splitlines_divergence(text):
+    if gitq.has_splitlines_divergence(text):
         # `str.splitlines()` (used two lines below, and by `patch.py`'s
         # own line-number check against the working tree) breaks on any
-        # of `_SPLITLINES_ONLY_BREAKS` or a lone "\r", none of which
+        # of `gitq`'s `_SPLITLINES_ONLY_BREAKS` or a lone "\r", none of which
         # `patch.py`'s "\n"-only split treats as a break at all. The two
         # counts disagree on such a file, so any line number this function
         # would otherwise record cannot be trusted -- not just near the
@@ -357,7 +327,7 @@ def _compute_snippet(repo, path, start, end, context=_SNIPPET_CONTEXT):
 
     Never raises: a missing path, an out-of-range line range, binary
     content, or a character that would make `str.splitlines()` number the
-    file differently from `patch.py` (see `_has_splitlines_divergence`)
+    file differently from `patch.py` (see `gitq.has_splitlines_divergence`)
     all come back as `{"available": False, "reason": ...}` so render.py
     can say so briefly instead of crashing or showing an empty box (see
     render.py's `_snippet_html`).
