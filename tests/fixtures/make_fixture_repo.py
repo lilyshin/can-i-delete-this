@@ -1300,7 +1300,9 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
     `form_feed.py` holds a form feed character seventeen lines past its
     target, well outside the snippet's own recorded window, to reproduce
     I2's finding: the refusal must not depend on where in the file the
-    form feed happens to sit.
+    divergent character happens to sit. `vtab.py` is the identical shape
+    with a vertical tab instead, for N2's finding that the fix must not
+    depend on which of the nine splitlines-only-break characters it is.
 
     `Ledger.kt` holds two methods of identical shape whose guard line is
     the bare `return` this project's Kotlin target already is, so a test
@@ -1516,6 +1518,36 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
         "    return None\n"                               # 22
     )
 
+    # Same far-divergence shape as `form_feed.py`, with a vertical tab
+    # instead of a form feed: N2's finding was that the fix detected only
+    # "\x0c" and left the other eight splitlines-only-break characters
+    # producing the identical hazard.
+    vtab = repo / "vtab.py"
+    vtab.write_text(
+        "def charge(order):\n"                           # 1
+        "    if order.already_charged:\n"                # 2
+        "        return {'status': 'duplicate'}\n"       # 3  <- target
+        "    order.mark_processed()\n"                   # 4
+        "    return order.total\n"                       # 5
+        "\n"                                             # 6
+        "\n"                                             # 7
+        "def refund(order):\n"                           # 8
+        "    return -order.total\n"                       # 9
+        "\n"                                             # 10
+        "\n"                                             # 11
+        "def audit_note():\n"                            # 12
+        "    pass\n"                                      # 13
+        "\n"                                             # 14
+        "\n"                                             # 15
+        "def another_helper():\n"                        # 16
+        "    pass\n"                                      # 17
+        "\n"                                             # 18
+        "\n"                                             # 19
+        "def report():\x0b\n"                             # 20  <- vertical tab
+        "    pass\n"                                      # 21
+        "    return None\n"                               # 22
+    )
+
     korean = repo / "결제" / "수수료.py"
     korean.parent.mkdir(parents=True)
     korean.write_text(
@@ -1556,6 +1588,8 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
                   "indent": "        "},
         "form_feed": {"path": "form_feed.py", "start": 3, "end": 3,
                        "indent": "        "},
+        "vtab": {"path": "vtab.py", "start": 3, "end": 3,
+                  "indent": "        "},
         "korean": {"path": "결제/수수료.py", "start": 6, "end": 6,
                     "indent": "        "},
     }

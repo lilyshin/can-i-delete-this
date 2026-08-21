@@ -259,6 +259,36 @@ def _select_needles(repo, path, start, end):
     return path_needles, repo_needles, notes
 
 
+# Every character `str.splitlines()` treats as a line break on its own
+# but a plain `split("\n")` does not (the eight-character set here is
+# exactly Python's own list minus "\n" and "\r\n", both of which the two
+# methods agree on): vertical tab, form feed, the three C1 separator
+# controls, NEL, and the two Unicode line/paragraph separators. A lone
+# "\r" not immediately followed by "\n" is the ninth case and is handled
+# separately below, since it depends on what follows it, not on its own
+# presence.
+_SPLITLINES_ONLY_BREAKS = frozenset(
+    "\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
+
+# A lone "\r" (one not part of a "\r\n" pair) is also a line break to
+# `str.splitlines()` but not to `split("\n")`; "\r\n" itself is a single
+# break to both, so it is excluded here rather than double-counted.
+_LONE_CR = re.compile(r"\r(?!\n)")
+
+
+def _has_splitlines_divergence(text):
+    """Whether `str.splitlines()` would number `text` differently from
+    splitting on "\\n" only (what `patch.py` does, matching `git apply`).
+
+    Used by `_read_snippet_source` below: any character this function
+    finds makes the line numbers `_compute_snippet` would otherwise
+    record untrustworthy, the same way a form feed alone used to.
+    """
+    if any(c in text for c in _SPLITLINES_ONLY_BREAKS):
+        return True
+    return bool(_LONE_CR.search(text))
+
+
 def _read_snippet_source(repo, path):
     """The target file's content at HEAD, or why it could not be read.
 
@@ -271,7 +301,7 @@ def _read_snippet_source(repo, path):
     failure here instead of raising.
 
     Returns (text, reason). `reason` is None on success, or one of
-    "missing-at-head" / "binary" / "form-feed".
+    "missing-at-head" / "binary" / "irregular-line-break".
     """
     try:
         text = gitq.run_git(repo, ["show", "HEAD:" + path])
@@ -286,23 +316,24 @@ def _read_snippet_source(repo, path):
         # Valid UTF-8 (so no UnicodeDecodeError above) but still binary by
         # git's own convention of treating a NUL byte as the signal.
         return None, "binary"
-    if "\x0c" in text:
+    if _has_splitlines_divergence(text):
         # `str.splitlines()` (used two lines below, and by `patch.py`'s
-        # own line-number check against the working tree) treats a form
-        # feed as a line break; `patch.py` counts lines by splitting on
-        # "\n" only, matching `git apply`. The two counts disagree on such
-        # a file, so any line number this function would otherwise record
-        # cannot be trusted -- not just near the form feed itself, since a
-        # single extra line shifts every recorded number after it. Marking
-        # the snippet unavailable here, rather than leaving the mismatch
-        # for patch.py's `_check_unmoved` to maybe catch, refuses for
-        # every form-feed file regardless of how far the divergence sits
-        # from the target: `_check_unmoved` only ever compares the lines
-        # inside the recorded snippet window, and a form feed positioned
-        # far enough past that window (or inside a run of identical lines)
-        # can leave the miscounted lines matching by coincidence, letting
-        # a patch build against numbers that are already wrong.
-        return None, "form-feed"
+        # own line-number check against the working tree) breaks on any
+        # of `_SPLITLINES_ONLY_BREAKS` or a lone "\r", none of which
+        # `patch.py`'s "\n"-only split treats as a break at all. The two
+        # counts disagree on such a file, so any line number this function
+        # would otherwise record cannot be trusted -- not just near the
+        # divergent character itself, since a single extra line shifts
+        # every recorded number after it. Marking the snippet unavailable
+        # here, rather than leaving the mismatch for patch.py's
+        # `_check_unmoved` to maybe catch, refuses regardless of how far
+        # the divergence sits from the target: `_check_unmoved` only ever
+        # compares the lines inside the recorded snippet window, and a
+        # divergent character positioned far enough past that window (or
+        # inside a run of identical lines) can leave the miscounted lines
+        # matching by coincidence, letting a patch build against numbers
+        # that are already wrong.
+        return None, "irregular-line-break"
     return text, None
 
 
@@ -311,10 +342,11 @@ def _compute_snippet(repo, path, start, end, context=_SNIPPET_CONTEXT):
     HEAD, for the report to show directly under the verdict.
 
     Never raises: a missing path, an out-of-range line range, binary
-    content, or a form feed character all come back as
-    `{"available": False, "reason": ...}` so render.py can say so briefly
-    instead of crashing or showing an empty
-    box (see render.py's `_snippet_html`).
+    content, or a character that would make `str.splitlines()` number the
+    file differently from `patch.py` (see `_has_splitlines_divergence`)
+    all come back as `{"available": False, "reason": ...}` so render.py
+    can say so briefly instead of crashing or showing an empty box (see
+    render.py's `_snippet_html`).
     """
     text, reason = _read_snippet_source(repo, path)
     if reason:

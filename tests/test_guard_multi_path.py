@@ -98,7 +98,7 @@ class TestUncappedRemainderIsExact(unittest.TestCase):
     def test_intro_line_is_plural_and_marker_prefixed(self):
         out = artifacts.skeleton("danger", _trace(4, 4))
         self.assertIn(
-            "# Before deleting, confirm these pass (look like tests, "
+            "# Before deleting, confirm these pass (tests by name, "
             "not confirmed):",
             out.splitlines(),
         )
@@ -281,7 +281,7 @@ class TestSingleGuardIsAlsoLineSplit(unittest.TestCase):
         # pins the plural sentence.
         out = artifacts.skeleton("danger", _trace(1, 1))
         self.assertIn(
-            "# Before deleting, confirm this passes (looks like a test, "
+            "# Before deleting, confirm this passes (a test by name, "
             "not confirmed):",
             out.splitlines(),
         )
@@ -399,7 +399,7 @@ class TestGuardBlockLineOrder(unittest.TestCase):
         out = artifacts.skeleton("danger", _trace(1, 1))
         self.assertEqual(out.splitlines(), [
             "# KEEP: hotfix: prevent double charge (#4127) (2026-08-20, a3f8c21)",
-            "# Before deleting, confirm this passes (looks like a test, "
+            "# Before deleting, confirm this passes (a test by name, "
             "not confirmed):",
             "#   t/case_01_test.py",
             "# If it is not a test, no test guards this: add one before "
@@ -414,7 +414,7 @@ class TestGuardBlockLineOrder(unittest.TestCase):
         out = artifacts.skeleton("danger", _trace(5, 30))
         lines = out.splitlines()
         intro_idx = lines.index(
-            "# Before deleting, confirm these pass (look like tests, "
+            "# Before deleting, confirm these pass (tests by name, "
             "not confirmed):"
         )
         path_idxs = [lines.index("#   t/case_{:02d}_test.py".format(i))
@@ -453,6 +453,17 @@ _DANGER_KEEP_LINE_ENTRIES = [
     ("guard.list_capped_unknown", "guard", {}),
 ]
 
+# Keys this test suite deliberately does not cover, and why. Kept as its
+# own constant, rather than inline in the coverage test, so that adding a
+# new exclusion is a one-line, visible decision instead of a silent edit
+# to the assertion itself.
+_DANGER_KEEP_EXCLUDED_KEYS = frozenset({
+    # Only ever appended when `marker` is None, and `patch.py` already
+    # refuses a markerless file before it would insert anything, so this
+    # line never reaches source regardless of its own length.
+    "danger.no_marker",
+})
+
 # The longest comment marker `scanner.COMMENT_MARKERS` knows about ("//",
 # "--"), used in place of a real one so this test bounds the worst case,
 # not just whichever marker a particular fixture happens to use.
@@ -473,11 +484,12 @@ class TestKeepCommentProseLineLength(unittest.TestCase):
     indent) is included -- 75 so that even a 4-space file indent on top
     of it stays under a linter's typical 79-column default.
 
-    Data-driven over `_STRINGS` itself (`_DANGER_KEEP_LINE_ENTRIES`), not
-    a list of literal rendered lines: a future key added to that table
-    without a length check is caught the same way `danger.guard_intro`,
-    `danger.guard_plural_intro` and `guard.list_capped_unknown` were
-    found over budget by the review that named this finding.
+    Data-driven over `_STRINGS` itself, via `_DANGER_KEEP_LINE_ENTRIES`,
+    not a list of literal rendered lines. `_DANGER_KEEP_LINE_ENTRIES` is
+    itself a hand-written literal, though, so this test alone would not
+    notice a new key added to `_STRINGS` without also being added here;
+    `TestDangerKeepLineEntriesCoverTheStringTable` below is what makes
+    that omission fail loudly instead of silently passing.
     """
 
     def test_every_entry_stays_within_the_prose_budget(self):
@@ -491,6 +503,53 @@ class TestKeepCommentProseLineLength(unittest.TestCase):
                         rendered = _WORST_GUARD_PREFIX + artifacts._t(
                             lang, key, **data_kwargs)
                     self.assertLessEqual(len(rendered), 75, repr(rendered))
+
+    def test_the_longest_entry_matches_stability_md(self):
+        # N1: docs/stability.md's Known-limitations entry states a
+        # concrete number ("the longest it actually reaches ... is 74")
+        # rather than just the 75-character cap, because a real
+        # end-to-end run needs a real figure to add the target's own
+        # indentation to. That number is a claim about this table's
+        # actual content, not just its bound, so it has to be pinned
+        # here or it goes stale exactly the way the doc's line-length
+        # entry has gone stale twice before.
+        longest = 0
+        for lang in ("en", "ko"):
+            for key, prefix_kind, data_kwargs in _DANGER_KEEP_LINE_ENTRIES:
+                if prefix_kind == "marker":
+                    rendered = artifacts._t(
+                        lang, key, marker=_WORST_MARKER_PREFIX, **data_kwargs)
+                else:
+                    rendered = _WORST_GUARD_PREFIX + artifacts._t(
+                        lang, key, **data_kwargs)
+                longest = max(longest, len(rendered))
+        self.assertEqual(longest, 74)
+
+
+class TestDangerKeepLineEntriesCoverTheStringTable(unittest.TestCase):
+    """N5: the previous round's docstring claimed a future key added to
+    `_STRINGS` without a length check "is caught the same way" the three
+    over-budget keys the review measured were -- but `_DANGER_KEEP_LINE_ENTRIES`
+    had nothing tying it to `_STRINGS` itself. The re-review's mutation
+    (a new 180-character `danger.mutated_extra` key, wired into the
+    danger branch) left `TestKeepCommentProseLineLength` green; only
+    unrelated exact-sequence pins caught it. This test is what makes that
+    claim true: every `danger.*`/`guard.*` key in `_STRINGS["en"]`,
+    except the ones `_DANGER_KEEP_EXCLUDED_KEYS` names and explains, must
+    be one of `_DANGER_KEEP_LINE_ENTRIES`'s own keys -- in both
+    directions, so a stale exclusion or a stale entry for a key that no
+    longer exists is caught too, not only a missing one.
+    """
+
+    def test_every_danger_and_guard_key_is_covered(self):
+        prefixed = {k for k in artifacts._STRINGS["en"]
+                    if k.startswith("danger.") or k.startswith("guard.")}
+        covered = {key for key, _, _ in _DANGER_KEEP_LINE_ENTRIES}
+        self.assertEqual(
+            prefixed - _DANGER_KEEP_EXCLUDED_KEYS, covered,
+            "a danger./guard. key is not covered by "
+            "_DANGER_KEEP_LINE_ENTRIES (or an excluded key no longer "
+            "needs excluding, or a covered key no longer exists)")
 
 
 if __name__ == "__main__":

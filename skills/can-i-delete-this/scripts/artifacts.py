@@ -69,9 +69,9 @@ _STRINGS = {
 
         "danger.keep": "{marker}KEEP: {subject} ({day}, {sha})",
         "danger.guard_intro": "{marker}Before deleting, confirm this passes "
-            "(looks like a test, not confirmed):",
+            "(a test by name, not confirmed):",
         "danger.guard_plural_intro": "{marker}Before deleting, confirm these pass "
-            "(look like tests, not confirmed):",
+            "(tests by name, not confirmed):",
         "danger.guard_unverified": "{marker}If it is not a test, no test guards this: "
             "add one before touching it.",
         "danger.guard_unverified_plural": "{marker}If none are tests, no test guards "

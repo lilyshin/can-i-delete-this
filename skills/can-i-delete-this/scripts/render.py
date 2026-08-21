@@ -168,8 +168,8 @@ _STRINGS = {
             "end of this file at HEAD.",
         "snippet.unavailable.binary": "This file is binary at HEAD; its "
             "contents cannot be shown as text.",
-        "snippet.unavailable.form-feed": "This file contains a form feed "
-            "character, which makes its line numbers unreliable; the "
+        "snippet.unavailable.irregular-line-break": "This file contains a "
+            "character that makes its line numbers unreliable; the "
             "target lines cannot be shown.",
         "snippet.unavailable.generic": "The target lines could not be read "
             "from this file at HEAD.",
@@ -250,8 +250,8 @@ _STRINGS = {
             "파일 끝을 넘어섰습니다.",
         "snippet.unavailable.binary": "이 파일은 HEAD 기준 바이너리라 텍스트로 "
             "보여줄 수 없습니다.",
-        "snippet.unavailable.form-feed": "이 파일에 form feed 문자가 있어 줄 번호를 "
-            "믿을 수 없으므로, 대상 줄을 보여줄 수 없습니다.",
+        "snippet.unavailable.irregular-line-break": "이 파일에 줄 번호를 믿을 수 "
+            "없게 만드는 문자가 있어, 대상 줄을 보여줄 수 없습니다.",
         "snippet.unavailable.generic": "HEAD 기준으로 대상 줄을 읽을 수 없습니다.",
 
         "activity.last_touch.lines": "대상 줄 최근 수정: {date} ({sha})",
@@ -753,10 +753,11 @@ def _legend_html(lang):
 def _snippet_unavailable_label(lang, reason, **kwargs):
     """Chrome for a snippet that could not be shown, keyed by `reason`
     (trace.py's `_compute_snippet`: "missing-at-head", "out-of-range",
-    "binary", "form-feed"). An unrecognized reason -- most likely an
-    older trace file whose `snippet.reason` predates one of these four,
-    or simply None -- falls back to a generic message rather than leaking
-    a raw key.
+    "binary", "irregular-line-break"). An unrecognized reason -- most
+    likely an older trace file whose `snippet.reason` predates one of
+    these four, or names a reason string this key once used before a
+    rename (e.g. the pre-generalization "form-feed"), or simply None --
+    falls back to a generic message rather than leaking a raw key.
     """
     lang = _resolve_lang(lang)
     key = "snippet.unavailable." + str(reason)

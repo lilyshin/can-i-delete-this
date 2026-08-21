@@ -437,7 +437,22 @@ class TestRefusals(_FixtureCase):
         unconditionally: `trace.py` marks the snippet unavailable the
         moment it sees the form feed, regardless of where it sits."""
         info = self.trace_for("form_feed")
-        self.assertEqual(info["snippet"], {"available": False, "reason": "form-feed"})
+        self.assertEqual(info["snippet"],
+                         {"available": False, "reason": "irregular-line-break"})
+        refused = self._refuse(info, _verdict(self.info["sha"]))
+        self.assertEqual(refused.code, "no-snippet")
+
+    def test_vertical_tab_far_past_the_snippet_window_is_refused(self):
+        """N2: the original I2 fix tested for "\\x0c" (form feed) alone,
+        but `str.splitlines()` treats eight other characters as line
+        breaks the same way, and a plain "\\n" split treats none of them
+        specially. This is the identical far-divergence shape as
+        `test_form_feed_far_past_the_snippet_window_is_refused`, with a
+        vertical tab instead: it must refuse the same way, not just for
+        the one character the original fix happened to name."""
+        info = self.trace_for("vtab")
+        self.assertEqual(info["snippet"],
+                         {"available": False, "reason": "irregular-line-break"})
         refused = self._refuse(info, _verdict(self.info["sha"]))
         self.assertEqual(refused.code, "no-snippet")
 
