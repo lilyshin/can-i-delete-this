@@ -852,6 +852,46 @@ def build_binary_target(dest: str) -> dict:
     return {"repo": str(repo), "path": "blob.bin", "line": 1, "sha": sha}
 
 
+def build_line_break_divergence(dest: str, *, name: str = "line_break_divergence",
+                                 divergent: bytes = b"") -> dict:
+    """A file with `divergent` bytes spliced between two short lines near
+    the top, and a target several lines further down -- for testing
+    trace.py's snippet reader against the real git-read path (not just
+    the pure `_has_splitlines_divergence` predicate in isolation), for
+    each of the nine characters that make `str.splitlines()` disagree
+    with the plain "\\n" split `patch.py` and `git apply` use, plus the
+    negative controls that must NOT be flagged.
+
+    `divergent=b""` (the default) is the plain-LF negative control: no
+    divergent bytes at all, still an ordinary multi-line file. Passing
+    `b"\\r\\n"` is the CRLF negative control: a real line ending, not a
+    lone divergent character, so a Windows-authored file must not be
+    refused either. Passing any single one of trace.py's
+    `_SPLITLINES_ONLY_BREAKS` characters, or a lone `b"\\r"`, is the
+    positive case: since the divergence sits near the top and the target
+    sits near the bottom, this always exercises the "before the target"
+    position, the one that actually shifts every recorded line number
+    downstream of it.
+
+    The target line number is computed from `divergent`'s own byte
+    content rather than assumed, since `divergent` can itself contain a
+    "\\n" (as `b"\\r\\n"` does), changing how many git-counted lines the
+    prefix chunk becomes.
+    """
+    repo = _init(dest, name)
+    target = repo / "m.py"
+    prefix = b"a = 1" + divergent + b"b = 2\n"
+    filler = b"".join("v{:02d} = {}\n".format(i, i).encode() for i in range(3, 9))
+    content = prefix + filler + b"TARGET = 42\n"
+    target.write_bytes(content)
+    sha = _commit(repo, "feat: add stuff", "2021-01-01T10:00:00")
+    lines = content.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    target_line = len(lines)  # "TARGET = 42" is always the last real line
+    return {"repo": str(repo), "path": "m.py", "line": target_line, "sha": sha}
+
+
 def build_korean_paths(dest: str) -> dict:
     """Korean commit messages and a Korean target filename, co-changed with
     a Korean-named test file under an ASCII `tests/` directory.

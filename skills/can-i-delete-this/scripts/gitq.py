@@ -130,7 +130,15 @@ class Commit:
     churn: tuple = ()
 
 
-def run_git(repo, args, ok_returncodes=(0,)):
+def _run_git_subprocess(repo, args, ok_returncodes, text):
+    """The read-only guard, the forced safe config, and the forced
+    environment sanitization that both `run_git` and `run_git_bytes`
+    need identically; only whether `subprocess.run` decodes stdout for
+    us (`text=True`, `run_git`'s own long-standing behavior) or hands it
+    back as raw bytes (`text=False`, `run_git_bytes`) differs between the
+    two, so that one difference is the only thing either function adds
+    on top of this.
+    """
     if not args:
         raise GitWriteAttempt("empty git invocation")
     # Strip exactly the known-safe `-c core.quotepath=off` prefix, if
@@ -151,12 +159,40 @@ def run_git(repo, args, ok_returncodes=(0,)):
     env = dict(os.environ)
     env.update(_SAFE_ENV_OVERRIDES)
     proc = subprocess.run(
-        ["git", *_SAFE_GIT_CONFIG, *args], cwd=repo, capture_output=True, text=True,
+        ["git", *_SAFE_GIT_CONFIG, *args], cwd=repo, capture_output=True, text=text,
         env=env,
     )
     if proc.returncode not in ok_returncodes:
-        raise RuntimeError("git " + " ".join(args) + " failed: " + proc.stderr.strip())
+        stderr = proc.stderr if text else proc.stderr.decode("utf-8", "replace")
+        raise RuntimeError("git " + " ".join(args) + " failed: " + stderr.strip())
     return proc.stdout
+
+
+def run_git(repo, args, ok_returncodes=(0,)):
+    return _run_git_subprocess(repo, args, ok_returncodes, text=True)
+
+
+def run_git_bytes(repo, args, ok_returncodes=(0,)):
+    """Like `run_git`, but returns stdout as raw, undecoded bytes.
+
+    `run_git`'s `text=True` puts `subprocess.run` into text mode, which
+    runs Python's universal-newline translation on the decoded output:
+    every lone "\\r" (one not already part of "\\r\\n") is rewritten to
+    "\\n" before any caller ever sees it, and "\\r\\n" itself collapses
+    to "\\n". A caller that needs to know whether the blob git actually
+    stored contains a lone "\\r" -- trace.py's snippet reader, checking
+    for exactly the divergence between `str.splitlines()` and a plain
+    "\\n" split that `patch.py` and `git apply` use -- cannot answer that
+    question from text `run_git` already translated; universal-newline
+    translation has already destroyed the one fact it needs. This
+    function hands back what git actually wrote to its stdout pipe,
+    undisturbed, so a caller can decode it itself without that
+    translation running first.
+
+    Same read-only guard, same forced safe config, same environment
+    sanitization as `run_git`; see `_run_git_subprocess`.
+    """
+    return _run_git_subprocess(repo, args, ok_returncodes, text=False)
 
 
 def commit_meta(repo, sha):

@@ -302,19 +302,33 @@ def _read_snippet_source(repo, path):
 
     Returns (text, reason). `reason` is None on success, or one of
     "missing-at-head" / "binary" / "irregular-line-break".
+
+    Reads through `gitq.run_git_bytes`, not `gitq.run_git`: `run_git`'s
+    text mode runs Python's universal-newline translation, which silently
+    rewrites a lone "\\r" to "\\n" before this function -- or
+    `_has_splitlines_divergence` below -- ever sees it, so a real
+    divergence between `str.splitlines()` and `patch.py`'s "\\n"-only
+    split would already have been erased by the time it could be
+    detected. Decoding the raw bytes ourselves is what lets that
+    detection see what git actually stored (see `gitq.run_git_bytes`'s
+    docstring, and `patch.py`'s `_read_working_tree`, which reads the
+    working tree side of the same comparison the identical way, through
+    `open(..., "rb")` rather than text mode).
     """
     try:
-        text = gitq.run_git(repo, ["show", "HEAD:" + path])
+        raw = gitq.run_git_bytes(repo, ["show", "HEAD:" + path])
     except RuntimeError:
         return None, "missing-at-head"
-    except UnicodeDecodeError:
-        # `run_git` decodes the subprocess's stdout as text; content that
-        # is not valid text under the current locale's encoding raises
-        # here rather than returning garbage.
+    if b"\x00" in raw:
+        # git's own convention: a NUL byte means binary. Checked on the
+        # raw bytes, before decoding, the same order patch.py's
+        # `_read_working_tree` uses for the same reason: a NUL byte is a
+        # binary signal regardless of whether the rest of the file
+        # happens to decode as valid UTF-8.
         return None, "binary"
-    if "\x00" in text:
-        # Valid UTF-8 (so no UnicodeDecodeError above) but still binary by
-        # git's own convention of treating a NUL byte as the signal.
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
         return None, "binary"
     if _has_splitlines_divergence(text):
         # `str.splitlines()` (used two lines below, and by `patch.py`'s

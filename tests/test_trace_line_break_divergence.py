@@ -14,18 +14,34 @@ sha and a wrong subject landing in a `KEEP:` comment whenever
 `tests/test_patch.py::TestRefusals::test_form_feed_far_past_the_snippet_window_is_refused`
 and its `test_vertical_tab_far_past_the_snippet_window_is_refused` sibling
 cover the real end-to-end shape (a real git repo, a real trace, a real
-`patch.py` refusal) for two of the nine characters. This file covers all
-nine directly against `trace._has_splitlines_divergence`, the pure
-function the fix added, since building nine git fixtures to exercise the
-same one-line check would be a lot of machinery for what a plain string
-in and a bool out already tests completely.
+`patch.py` refusal) for two of the nine characters. `TestEachOfTheEight...`
+and `TestLoneCarriageReturnIsTheNinthCase` below cover all nine directly
+against `trace._has_splitlines_divergence`, the pure predicate the fix
+added, since building nine git fixtures to exercise the same one-line
+check would be a lot of machinery for what a plain string in and a bool
+out already tests completely.
+
+That pure-predicate coverage has a real gap, though, found by the third
+round: `_read_snippet_source` used to read the blob through
+`gitq.run_git`, whose text mode runs Python's universal-newline
+translation and silently rewrites a lone "\r" to "\n" before the
+predicate ever saw it, so the lone-CR case passed the predicate test for
+the wrong reason -- the predicate was never exercised against a string a
+real caller could actually produce. `TestReadSnippetSourceThroughARealRepo`
+below closes that gap by going through `_read_snippet_source` itself
+against a real git repository for all nine characters (and the CRLF and
+plain-LF negative controls), so the translation layer sits inside what
+the test actually exercises.
 """
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "can-i-delete-this" / "scripts"))
+import make_fixture_repo
 import trace as tracer
 
 # The eight characters `_SPLITLINES_ONLY_BREAKS` names, plus the ninth
@@ -108,6 +124,57 @@ class TestLoneCarriageReturnIsTheNinthCase(unittest.TestCase):
         text = "a\r\nb\r\nc\n"
         self.assertFalse(_really_diverges(text))
         self.assertFalse(tracer._has_splitlines_divergence(text))
+
+
+class TestReadSnippetSourceThroughARealRepo(unittest.TestCase):
+    """The integration-level version of the two classes above: a real git
+    repository, read through the real `gitq.run_git_bytes` call
+    `_read_snippet_source` makes, not a Python string built by hand. This
+    is what actually exercises the universal-newline translation
+    `gitq.run_git`'s text mode used to apply (see the module docstring):
+    a lone "\\r" only fails to reach `_has_splitlines_divergence` when
+    something upstream of it has already rewritten the byte, and nothing
+    in `TestLoneCarriageReturnIsTheNinthCase` above could ever exercise
+    that path, since it builds its string directly in Python.
+
+    Each character sits well before the fixture's target (see
+    `make_fixture_repo.build_line_break_divergence`), so this also covers
+    the "before the target" position the second re-review round asked
+    for explicitly: that is the position that shifts every line number
+    recorded after it, not just the divergent line itself.
+    """
+
+    def _read(self, divergent):
+        with tempfile.TemporaryDirectory() as tmp:
+            info = make_fixture_repo.build_line_break_divergence(
+                tmp, divergent=divergent)
+            return tracer._read_snippet_source(info["repo"], info["path"])
+
+    def test_each_of_the_eight_always_break_characters_is_detected(self):
+        for char in _EIGHT_ALWAYS_BREAK_CHARS:
+            with self.subTest(char=hex(ord(char))):
+                text, reason = self._read(char.encode("utf-8"))
+                self.assertIsNone(text)
+                self.assertEqual(reason, "irregular-line-break")
+
+    def test_lone_cr_before_the_target_is_detected(self):
+        text, reason = self._read(b"\r")
+        self.assertIsNone(text)
+        self.assertEqual(reason, "irregular-line-break")
+
+    def test_crlf_negative_control_is_not_flagged(self):
+        # A real Windows-authored file must not be refused: "\r\n" is a
+        # single, agreed-upon line break to both `str.splitlines()` and a
+        # plain "\n" split, not a divergence.
+        text, reason = self._read(b"\r\n")
+        self.assertIsNotNone(text)
+        self.assertIsNone(reason)
+
+    def test_plain_lf_negative_control_is_not_flagged(self):
+        # The other negative control: no divergent bytes inserted at all.
+        text, reason = self._read(b"")
+        self.assertIsNotNone(text)
+        self.assertIsNone(reason)
 
 
 if __name__ == "__main__":
