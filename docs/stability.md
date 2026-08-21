@@ -26,17 +26,38 @@ flag itself, and what passing it does, does not.
 - `scan.py`: `--repo` (required); `--path` (defaults to the repo root);
   `--min-lines`, `--max-candidates`.
 - `verdict.py`: a single positional path to a verdict JSON file; exits
-  non-zero and prints `INVALID: ...` on a schema violation, prints `valid`
-  otherwise.
+  non-zero and prints `INVALID: ...` to stderr on a schema violation,
+  prints `valid` to stdout otherwise.
 - `render.py`: `--trace`, `--verdict` (required); `--outdir` (defaults to
   the system temp directory); `--lang` (`en` or `ko`; an unknown value
-  falls back to `en`).
+  falls back to `en`). Prints the path of the report it wrote to stdout;
+  that print is the only way a caller learns where the report went.
 - `artifacts.py`: either `--scan`, or both `--trace` and `--verdict`;
   `--copy` (writes to the clipboard when a clipboard tool is found);
   `--lang` (same values as `render.py`).
 - `patch.py`: `--trace`, `--verdict` (required); `--repo` (defaults to the
   repo the trace recorded); `--out` (defaults to stdout); `--lang` (same
   values as `render.py`).
+
+### Exit codes
+
+Every script uses `0` for success and `2` for a usage error (a missing or
+malformed command-line argument; argparse's own convention). Beyond that,
+each script's own failure mode gets `1`:
+
+- `trace.py`: `1` when the underlying git command fails (a path git
+  cannot find, a line range past the end of the file, and similar).
+- `scan.py`: `1` on the same class of git failure.
+- `verdict.py`: `1` when the verdict fails schema validation.
+- `patch.py`: `1` when the patch is refused. `Refused.code` (see that
+  class in `patch.py`) is itself stable and machine-readable, the one
+  promise this page makes about an exception's own attribute rather than
+  a process exit code; a caller branches on `code`, never on the
+  refusal's translated text.
+- `render.py` and `artifacts.py` make no git calls of their own and have
+  no refusal path, so `1` from either is an unhandled exception (a
+  missing input file, JSON that will not parse), not a code either
+  script chooses on purpose.
 
 ### The verdict schema (`verdict.py`)
 
@@ -46,6 +67,9 @@ flag itself, and what passing it does, does not.
   An evidence item may omit `role`; if present, it must be one of these.
 - Artifact kinds, one per grade: `danger` to `keep-comment`, `conditional`
   to `checklist`, `safe` to `pr-body`, `unknown` to `question`.
+- `summary` must be a non-empty string, for every grade.
+- `artifact` must be an object whose `kind` matches the grade (one of the
+  kinds above); `artifact.content` must be a non-empty string.
 - Any grade above `unknown` requires at least one evidence item of type
   `commit`. `conditional` additionally requires at least one condition.
 
@@ -55,8 +79,9 @@ To write a verdict, an agent cites entries out of `trace.py`'s output.
 These keys, and what they hold, are stable:
 
 - `introduction_candidates`: a list of candidates, each with `sha`,
-  `subject`, `date`, and `why` (how the candidate was found, e.g.
-  `"pickaxe"`, `"blame"`, `"cited"`).
+  `subject`, `date`, and `why` (how the candidate was found: `"blame"`,
+  `"pickaxe"`, `"line-history"`, or `"cited"` for a commit added through
+  `--include-commit`).
 - `blame_candidates`: a list of candidates sourced from `git blame`
   instead of pickaxe and line history, each with `sha`, `subject`, and
   `date`. Unlike `introduction_candidates`, there is no `why` here, since
@@ -102,13 +127,21 @@ names no commit to attach the patch to.
 ## Known limitations
 
 - A file containing a form feed character is refused by `patch.py`
-  permanently. `trace.py` counts lines with `str.splitlines()`, which
-  breaks on a form feed; `patch.py` counts lines by splitting on `"\n"`
-  only, matching `git apply`. The two counts disagree on such a file, so
-  the recorded line numbers cannot be trusted, and refusing is the safe
-  side.
+  permanently. `str.splitlines()` (used to number the target's own
+  snippet) treats a form feed as a line break; `patch.py` counts lines by
+  splitting on `"\n"` only, matching `git apply`. The two would disagree
+  on such a file, so `trace.py` detects the form feed itself and records
+  the target's snippet as unavailable, which makes `patch.py` refuse
+  through its `no-snippet` check unconditionally, rather than only when
+  the resulting line-number disagreement happens to fall inside the
+  snippet's own recorded window.
 - The diff `patch.py` emits must be applied with `git apply` from the
   repository root. It is not applied for you.
 - A KEEP comment's path lines can exceed a linter's maximum line length
   when the repository's own paths are long. The path is never shortened
   to fit, because a shortened path is no longer the fact it is reporting.
+  Every other line the comment can carry is this project's own wording,
+  and that wording is kept to 75 characters or fewer (leaving room for a
+  4-space indent under a linter's typical 79-column default), so it never
+  causes the overage on its own; a path is the only fact whose length
+  this project does not control.
