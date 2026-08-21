@@ -68,14 +68,14 @@ _STRINGS = {
             "that cites one of them with evidence is written.",
 
         "danger.keep": "{marker}KEEP: {subject} ({day}, {sha})",
-        "danger.guard_intro": "{marker}Before deleting, confirm this still passes "
-            "(its name looks like a test, not confirmed):",
-        "danger.guard_plural_intro": "{marker}Before deleting, confirm these still pass "
-            "(names look like tests, not confirmed):",
+        "danger.guard_intro": "{marker}Before deleting, confirm this passes "
+            "(looks like a test, not confirmed):",
+        "danger.guard_plural_intro": "{marker}Before deleting, confirm these pass "
+            "(look like tests, not confirmed):",
         "danger.guard_unverified": "{marker}If it is not a test, no test guards this: "
             "add one before touching it.",
-        "danger.guard_unverified_plural": "{marker}If none of these are tests, no test "
-            "guards this: add one before touching it.",
+        "danger.guard_unverified_plural": "{marker}If none are tests, no test guards "
+            "this: add one before touching it.",
         "danger.warning": "{marker}WARNING: no test guards this. Add one before touching it.",
         "danger.no_marker": "No comment marker is known for this file type; "
             "prefix each line above with your language's own comment marker.",
@@ -84,7 +84,7 @@ _STRINGS = {
         "guard.list_capped": "and possibly more: {listed} of {total} files "
             "from this commit are listed",
         "guard.list_capped_unknown": "and possibly more: this trace does not "
-            "record how many files this commit really touched",
+            "record the total files touched",
 
         "conditional.title": "Deletion checklist for {path}:{start}",
         "conditional.condition": "- [ ] Confirm the condition that made this "
@@ -322,10 +322,14 @@ def _top(grade, trace_data, real_refs, all_refs):
       that skips `evidence` entirely has no more basis for picking one
       candidate over another than a citation that fails to resolve does,
       so this is treated the same as "unresolved" -- `candidate` is {}.
-      Both real call sites (`patch.py`, `artifacts.py`'s own CLI) always
-      pass `evidence` from a verdict `verdict.validate` already checked,
-      so this only fires when a caller invokes `skeleton()` directly with
-      none at all. `grade == "unknown"` is exempt: unknown's own rendering
+      Neither real call site validates the verdict before this runs:
+      `patch.py` checks only `grade` (see `build`'s early checks), and
+      `artifacts.py`'s own CLI checks nothing at all. So this branch, and
+      `patch.py`'s `_comment_lines` skeleton fallback, are both live
+      whenever either script is handed a verdict that never went through
+      `verdict.validate` -- which is exactly why this status exists: a
+      caller that skips validation is the caller this status defends
+      against. `grade == "unknown"` is exempt: unknown's own rendering
       already says "closest commit" and flags the investigation as
       inconclusive, so guessing the oldest candidate there is the same
       honest fallback it always was, not a new confident wrong answer.
@@ -435,11 +439,21 @@ def _not_introduction_text(grade, target, refs, *, lang="en"):
     guards against, just reached from evidence that resolves instead of
     evidence that doesn't, so this states the situation plainly instead
     of guessing, the same way `_unresolved_citation_text` does.
+
+    `refs` must be non-empty: this is only ever called from `_top`'s
+    "not_introduction" status, which `_top` can only return when
+    `all_refs` (what becomes `refs` here) was truthy in the first place --
+    one or more commits were cited, just none of them tagged as the real
+    introduction. So this does not fall back to a placeholder for an
+    empty `refs` either, for the same reason `_unresolved_citation_text`
+    no longer does: a fallback written for a case that cannot happen at
+    this call site is exactly the kind of dead code that becomes live and
+    wrong the moment a future caller passes it something falsy.
     """
     unknown = _t(lang, "common.unknown")
     path = target.get("path", unknown)
     start = target.get("start", unknown)
-    cited = ", ".join(refs) if refs else unknown
+    cited = ", ".join(refs)
     return "\n".join([
         "{}: {}".format(_t(lang, "label.grade"), grade),
         "{}: {}:{}".format(_t(lang, "label.target"), path, start),
@@ -583,9 +597,18 @@ def _guard_lines(tests, capped, total_changed, present_changed, lang):
     with, but not the indentation `patch.py` will add once the line reaches
     the target file, so any threshold here would be a guess about a length
     this module never gets to see. Splitting unconditionally sidesteps the
-    guess entirely -- every line this function returns carries at most one
-    path, so no line's length is ever in question here regardless of how
-    long that one path turns out to be. `conditional.run_guard` and
+    guess for a path's own contribution: every line this function returns
+    carries at most one path, so a long path is isolated on its own line
+    instead of compounding with another path or with the caveat sentence.
+    It does not make length a non-issue for the lines this function
+    returns that carry no path at all (the "and N more" tail and the
+    capped-list disclosure below) -- those are plain prose, and a
+    real end-to-end run found one of them longer than the path line
+    sitting next to it. Their length is bounded a different way: every
+    string this module writes is kept short enough on its own (see
+    `_STRINGS` and the test that bounds it) that even the longest comment
+    marker this project knows about, plus a four-space file indent, stays
+    under a linter's default line length. `conditional.run_guard` and
     `safe.guarded_by` keep the comma-joined form `_guard_text` returns
     instead -- those are checklist and evidence lines, not lines
     `patch.py` inserts into source, so the length pressure that drove this

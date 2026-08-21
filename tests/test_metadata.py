@@ -19,6 +19,24 @@ class TestMetadata(unittest.TestCase):
         self.assertEqual(data["license"], "MIT")
         self.assertTrue((ROOT / "skills" / NAME / "SKILL.md").is_file())
 
+    def test_version_agrees_across_both_plugin_files(self):
+        # M6: plugin.json's own version, marketplace.json's top-level
+        # metadata.version, and marketplace.json's per-plugin entry
+        # version are three separate strings a release step has to keep
+        # in step by hand; nothing caught a skew between them before this.
+        plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+        marketplace = json.loads(
+            (ROOT / ".claude-plugin" / "marketplace.json").read_text())
+        plugin_entry = next(p for p in marketplace["plugins"] if p["name"] == NAME)
+        versions = {
+            "plugin.json": plugin["version"],
+            "marketplace.json metadata.version": marketplace["metadata"]["version"],
+            "marketplace.json plugins[].version": plugin_entry["version"],
+        }
+        self.assertEqual(
+            len(set(versions.values())), 1,
+            "version mismatch across plugin metadata: {}".format(versions))
+
     def test_skill_frontmatter_has_name_and_description_only(self):
         text = (ROOT / "skills" / NAME / "SKILL.md").read_text()
         self.assertTrue(text.startswith("---\n"))

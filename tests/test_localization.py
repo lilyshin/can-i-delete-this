@@ -32,6 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "can-i-delete-this" / "scripts"))
 import artifacts
+import patch
 import render
 
 
@@ -311,6 +312,32 @@ class TestArtifactsStringTableKeyParity(unittest.TestCase):
     def test_en_and_ko_have_identical_keys(self):
         en_keys = set(artifacts._STRINGS["en"].keys())
         ko_keys = set(artifacts._STRINGS["ko"].keys())
+        self.assertEqual(en_keys - ko_keys, set(), "keys only in en (missing from ko)")
+        self.assertEqual(ko_keys - en_keys, set(), "keys only in ko (missing from en)")
+
+
+class TestRenderStringTableKeyParity(unittest.TestCase):
+    """Same drift protection as `TestArtifactsStringTableKeyParity` above,
+    for `render.py`'s own `_STRINGS` table (deferred item 2 of the final
+    review: both tables are in sync today -- 51 keys each side, checked
+    independently before this test existed -- but this defect class has
+    bitten the project twice already, so a future one-sided key addition
+    should fail loudly here instead of only in a Korean user's report."""
+
+    def test_en_and_ko_have_identical_keys(self):
+        en_keys = set(render._STRINGS["en"].keys())
+        ko_keys = set(render._STRINGS["ko"].keys())
+        self.assertEqual(en_keys - ko_keys, set(), "keys only in en (missing from ko)")
+        self.assertEqual(ko_keys - en_keys, set(), "keys only in ko (missing from en)")
+
+
+class TestPatchStringTableKeyParity(unittest.TestCase):
+    """Same drift protection for `patch.py`'s own `_STRINGS` table (13
+    keys each side, checked independently before this test existed)."""
+
+    def test_en_and_ko_have_identical_keys(self):
+        en_keys = set(patch._STRINGS["en"].keys())
+        ko_keys = set(patch._STRINGS["ko"].keys())
         self.assertEqual(en_keys - ko_keys, set(), "keys only in en (missing from ko)")
         self.assertEqual(ko_keys - en_keys, set(), "keys only in ko (missing from en)")
 

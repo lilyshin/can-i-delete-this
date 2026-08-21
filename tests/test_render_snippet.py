@@ -3,8 +3,8 @@ lines of context, rendered directly under the verdict block so a reader
 can see what is being judged without opening an editor.
 
 Covers: available rendering with line numbers and a marked target line,
-each of the three degraded cases (missing-at-head, out-of-range, binary)
-rendering a short explanation instead of an empty box or a crash,
+each of the four degraded cases (missing-at-head, out-of-range, binary,
+form-feed) rendering a short explanation instead of an empty box or a crash,
 localization, backward compatibility with a trace.json that predates the
 `snippet` key, and escaping of arbitrary file content -- the highest-risk
 injection surface on the page, since unlike a commit subject it is
@@ -105,6 +105,13 @@ class TestSnippetDegradedCases(unittest.TestCase):
         self.assertIn("binary", html)
         self.assertNotIn('<div class="snippet-row', html)
 
+    def test_form_feed_shows_a_short_explanation(self):
+        html = render.render(
+            _trace_with_snippet({"available": False, "reason": "form-feed"}),
+            VERDICT)
+        self.assertIn("form feed", html)
+        self.assertNotIn('<div class="snippet-row', html)
+
     def test_unrecognized_reason_falls_back_to_generic_text_not_a_raw_key(self):
         html = render.render(
             _trace_with_snippet({"available": False, "reason": "some-future-reason"}),
@@ -148,6 +155,7 @@ class TestSnippetLocalization(unittest.TestCase):
             ("missing-at-head", "HEAD에 더 이상 없어서"),
             ("out-of-range", "파일 끝을 넘어섰습니다"),
             ("binary", "바이너리라"),
+            ("form-feed", "form feed 문자가 있어"),
         ]:
             with self.subTest(reason=reason):
                 html = render.render(

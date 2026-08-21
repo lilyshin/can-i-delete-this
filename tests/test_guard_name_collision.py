@@ -52,7 +52,7 @@ class TestGuardLineNamesTheGenuineTestNotJustTheFalsePositive(unittest.TestCase)
         # must read "none of these", not "it" -- the singular wording would
         # itself misreport how many candidates are being talked about.
         out = artifacts.skeleton("danger", self.result)
-        self.assertIn("If none of these are tests, no test guards this", out)
+        self.assertIn("If none are tests, no test guards this", out)
         self.assertNotIn("If it is not a test, no test guards this", out)
 
 

@@ -271,7 +271,7 @@ def _read_snippet_source(repo, path):
     failure here instead of raising.
 
     Returns (text, reason). `reason` is None on success, or one of
-    "missing-at-head" / "binary".
+    "missing-at-head" / "binary" / "form-feed".
     """
     try:
         text = gitq.run_git(repo, ["show", "HEAD:" + path])
@@ -286,6 +286,23 @@ def _read_snippet_source(repo, path):
         # Valid UTF-8 (so no UnicodeDecodeError above) but still binary by
         # git's own convention of treating a NUL byte as the signal.
         return None, "binary"
+    if "\x0c" in text:
+        # `str.splitlines()` (used two lines below, and by `patch.py`'s
+        # own line-number check against the working tree) treats a form
+        # feed as a line break; `patch.py` counts lines by splitting on
+        # "\n" only, matching `git apply`. The two counts disagree on such
+        # a file, so any line number this function would otherwise record
+        # cannot be trusted -- not just near the form feed itself, since a
+        # single extra line shifts every recorded number after it. Marking
+        # the snippet unavailable here, rather than leaving the mismatch
+        # for patch.py's `_check_unmoved` to maybe catch, refuses for
+        # every form-feed file regardless of how far the divergence sits
+        # from the target: `_check_unmoved` only ever compares the lines
+        # inside the recorded snippet window, and a form feed positioned
+        # far enough past that window (or inside a run of identical lines)
+        # can leave the miscounted lines matching by coincidence, letting
+        # a patch build against numbers that are already wrong.
+        return None, "form-feed"
     return text, None
 
 
@@ -293,9 +310,10 @@ def _compute_snippet(repo, path, start, end, context=_SNIPPET_CONTEXT):
     """The target lines plus a few lines of surrounding context, read from
     HEAD, for the report to show directly under the verdict.
 
-    Never raises: a missing path, an out-of-range line range, or binary
-    content all come back as `{"available": False, "reason": ...}` so
-    render.py can say so briefly instead of crashing or showing an empty
+    Never raises: a missing path, an out-of-range line range, binary
+    content, or a form feed character all come back as
+    `{"available": False, "reason": ...}` so render.py can say so briefly
+    instead of crashing or showing an empty
     box (see render.py's `_snippet_html`).
     """
     text, reason = _read_snippet_source(repo, path)

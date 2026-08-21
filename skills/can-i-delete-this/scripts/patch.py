@@ -105,9 +105,11 @@ _STRINGS = {
             "comment: at least one of its lines does not start with "
             "{marker}. Either the verdict's own artifact content is not "
             "comment lines in this file's syntax, or (when it carries none) "
-            "its citation resolves to no commit in this trace or to no "
-            "commit tagged as the introduction. It cannot be inserted into "
-            "source. Run artifacts.py to read what it says and act on that "
+            "its citation resolves to no commit in this trace, resolves to "
+            "no commit tagged as the introduction, or was never made at "
+            "all while the trace offered more than one introduction "
+            "candidate to choose from. It cannot be inserted into source. "
+            "Run artifacts.py to read what it says and act on that "
             "instead.",
     },
     "ko": {
@@ -143,8 +145,9 @@ _STRINGS = {
         "not-a-comment": "이 검증(verdict)의 KEEP 주석이 주석이 아닙니다. "
             "{marker}로 시작하지 않는 줄이 있습니다. 검증의 artifact content가 이 "
             "파일 문법의 주석 줄이 아니거나, content가 없는 경우라면 인용한 커밋이 "
-            "이 trace에 없거나 도입 커밋으로 표시된 것이 없습니다. 소스에 넣을 수 "
-            "없으니 artifacts.py를 실행해 내용을 읽고 그에 따라 처리하세요.",
+            "이 trace에 없거나, 도입 커밋으로 표시된 것이 없거나, 후보가 여럿인데도 "
+            "근거로 아무 커밋도 인용하지 않은 경우입니다. 소스에 넣을 수 없으니 "
+            "artifacts.py를 실행해 내용을 읽고 그에 따라 처리하세요.",
     },
 }
 
@@ -165,9 +168,10 @@ def _t(lang, key, **kwargs):
 class Refused(Exception):
     """No patch was built, and why.
 
-    `code` is stable and machine-readable; `str(exc)` is the sentence a
-    person reads, and is translated. Callers that branch on a refusal
-    branch on the code, never on the text.
+    `code` is machine-readable, and is one of `docs/stability.md`'s own
+    promises (see that page's "Exit codes" section); `str(exc)` is the
+    sentence a person reads, and is translated (see `_STRINGS`). Callers
+    that branch on a refusal branch on the code, never on the text.
 
     Codes:
 
@@ -188,7 +192,9 @@ class Refused(Exception):
       target file's own syntax, so it cannot go into source code. Either
       the verdict's `artifact.content` is not (prose, another language's
       marker), or the verdict carries none and the skeleton came back as a
-      warning paragraph about an unresolved or non-introduction citation.
+      warning paragraph about an unresolved citation, a non-introduction
+      citation, or an ambiguous one (no citation at all, against a trace
+      with more than one introduction candidate).
     """
 
     def __init__(self, code, message):
@@ -331,9 +337,11 @@ def _comment_lines(trace_data, verdict_data, marker, indent, lang):
     anyone.
 
     Either text is checked, not trusted: every line has to start with the
-    target file's own comment marker. An unresolved or non-introduction
-    citation makes `skeleton` return a warning paragraph instead of a
-    comment (see its `_top`), and an agent can write prose into
+    target file's own comment marker. An unresolved citation, a
+    non-introduction citation, or an ambiguous one (no citation at all,
+    against a trace with more than one introduction candidate) all make
+    `skeleton` return a warning paragraph instead of a comment (see its
+    `_top`), and an agent can write prose into
     `artifact.content` just as easily; either one in a source file is a
     syntax error. Rather than reformat it into something insertable --
     which for the skeleton would mean deciding what an unverified

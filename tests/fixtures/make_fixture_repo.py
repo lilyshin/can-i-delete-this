@@ -1297,6 +1297,11 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
     holding a NUL byte) and `docs/fee.rst` (an extension no marker is
     known for) exist to be refused.
 
+    `form_feed.py` holds a form feed character seventeen lines past its
+    target, well outside the snippet's own recorded window, to reproduce
+    I2's finding: the refusal must not depend on where in the file the
+    form feed happens to sit.
+
     `Ledger.kt` holds two methods of identical shape whose guard line is
     the bare `return` this project's Kotlin target already is, so a test
     can swap them (an ordinary refactor) and leave a line that matches the
@@ -1478,6 +1483,39 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
         b"    return order.total\r\n"                     # 8
     )
 
+    # A form feed sitting well past the snippet's own recorded window
+    # (target at line 3, `_SNIPPET_CONTEXT` reaches to line 7, form feed
+    # at line 20 of 22): I2's exact far-divergence reproduction. Before
+    # trace.py detected the form feed itself, `str.splitlines()`'s
+    # line-break-on-form-feed only mis-numbered lines from 20 onward, so
+    # the recorded window (lines 1-7) matched the working tree by
+    # coincidence and a patch was built anyway.
+    form_feed = repo / "form_feed.py"
+    form_feed.write_text(
+        "def charge(order):\n"                           # 1
+        "    if order.already_charged:\n"                # 2
+        "        return {'status': 'duplicate'}\n"       # 3  <- target
+        "    order.mark_processed()\n"                   # 4
+        "    return order.total\n"                       # 5
+        "\n"                                             # 6
+        "\n"                                             # 7
+        "def refund(order):\n"                           # 8
+        "    return -order.total\n"                       # 9
+        "\n"                                             # 10
+        "\n"                                             # 11
+        "def audit_note():\n"                            # 12
+        "    pass\n"                                      # 13
+        "\n"                                             # 14
+        "\n"                                             # 15
+        "def another_helper():\n"                        # 16
+        "    pass\n"                                      # 17
+        "\n"                                             # 18
+        "\n"                                             # 19
+        "def report():\x0c\n"                             # 20  <- form feed
+        "    pass\n"                                      # 21
+        "    return None\n"                               # 22
+    )
+
     korean = repo / "결제" / "수수료.py"
     korean.parent.mkdir(parents=True)
     korean.write_text(
@@ -1516,6 +1554,8 @@ def build_patch_targets(dest: str, *, name: str = "patch_targets") -> dict:
         "nul": {"path": "nul.py", "start": 2, "end": 2, "indent": "    "},
         "crlf": {"path": "crlf.py", "start": 6, "end": 6,
                   "indent": "        "},
+        "form_feed": {"path": "form_feed.py", "start": 3, "end": 3,
+                       "indent": "        "},
         "korean": {"path": "결제/수수료.py", "start": 6, "end": 6,
                     "indent": "        "},
     }

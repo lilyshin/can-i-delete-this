@@ -33,17 +33,23 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "can-i-delete-this" / "scripts"))
 import artifacts
+import scanner
 
 _SHA = "a3f8c21" + "0" * 33
 
 
-def _trace(shown, total, *, lang_paths=None):
+def _trace(shown, total, *, override_paths=None):
     """A trace whose cited (and only) candidate co-changed `shown`
     test-looking paths, out of `total` the commit is said to have really
     touched (`co_changed_totals[_SHA] = total`). `shown == total` means
     the cited sha was never capped; `shown < total` means it was.
+
+    `override_paths` replaces the generated `t/case_NN_test.py` names
+    with the caller's own list (see `TestGuardLineLengthDiscipline`,
+    which passes real long paths through here); it has nothing to do
+    with language, unlike its old name suggested.
     """
-    paths = lang_paths or ["t/case_{:02d}_test.py".format(i) for i in range(1, shown + 1)]
+    paths = override_paths or ["t/case_{:02d}_test.py".format(i) for i in range(1, shown + 1)]
     return {
         "target": {"path": "app/service.py", "start": 3, "end": 3},
         "introduction_candidates": [{
@@ -92,15 +98,15 @@ class TestUncappedRemainderIsExact(unittest.TestCase):
     def test_intro_line_is_plural_and_marker_prefixed(self):
         out = artifacts.skeleton("danger", _trace(4, 4))
         self.assertIn(
-            "# Before deleting, confirm these still pass (names look "
-            "like tests, not confirmed):",
+            "# Before deleting, confirm these pass (look like tests, "
+            "not confirmed):",
             out.splitlines(),
         )
 
     def test_closing_line_unchanged(self):
         out = artifacts.skeleton("danger", _trace(4, 4))
         self.assertIn(
-            "# If none of these are tests, no test guards this: add one "
+            "# If none are tests, no test guards this: add one "
             "before touching it.",
             out.splitlines(),
         )
@@ -199,8 +205,8 @@ class TestListCappedQuadrants(unittest.TestCase):
         out = artifacts.skeleton("danger", trace)
         self.assertEqual(
             self._tail(out),
-            ["#   and possibly more: this trace does not record how many "
-             "files this commit really touched"],
+            ["#   and possibly more: this trace does not record the "
+             "total files touched"],
         )
 
 
@@ -275,11 +281,11 @@ class TestSingleGuardIsAlsoLineSplit(unittest.TestCase):
         # pins the plural sentence.
         out = artifacts.skeleton("danger", _trace(1, 1))
         self.assertIn(
-            "# Before deleting, confirm this still passes (its name looks "
-            "like a test, not confirmed):",
+            "# Before deleting, confirm this passes (looks like a test, "
+            "not confirmed):",
             out.splitlines(),
         )
-        self.assertNotIn("confirm these still pass", out)
+        self.assertNotIn("confirm these pass", out)
 
     def test_intro_line_is_singular_not_plural_wording_ko(self):
         out = artifacts.skeleton("danger", _trace(1, 1), lang="ko")
@@ -297,7 +303,7 @@ class TestSingleGuardIsAlsoLineSplit(unittest.TestCase):
             "touching it.",
             out.splitlines(),
         )
-        self.assertNotIn("If none of these are tests", out)
+        self.assertNotIn("If none are tests", out)
 
     def test_single_capped_guard_still_discloses_the_list_cut(self):
         # One test-looking path survived a cap that cut the rest of this
@@ -344,32 +350,33 @@ class TestGuardLineLengthDiscipline(unittest.TestCase):
     ever carries more than one path, with a short fixed sentence around
     that path, keeps every line short by construction instead of by a
     guessed limit -- checked here by subtracting each real path back out
-    of the rendered lines and confirming what remains stays well under a
-    linter's max line length, for both a single long path and a dozen of
-    them.
+    of the rendered lines and confirming what remains stays under I3's
+    75-character prose budget (see `TestKeepCommentProseLineLength` below
+    for the budget itself, checked directly against `_STRINGS`), for both
+    a single long path and a dozen of them.
     """
 
     _LONG_PATH = "apps/bombay/lib/bombay/schemas/space_settings_configuration_test.exs"
 
     def test_single_long_path_keeps_non_path_text_short(self):
-        trace = _trace(1, 1, lang_paths=[self._LONG_PATH])
+        trace = _trace(1, 1, override_paths=[self._LONG_PATH])
         out = artifacts.skeleton("danger", trace)
         for line in out.splitlines():
             without_path = line.replace(self._LONG_PATH, "")
-            self.assertLessEqual(len(without_path), 100, repr(line))
+            self.assertLessEqual(len(without_path), 75, repr(line))
 
     def test_twelve_long_paths_keep_non_path_text_short(self):
         long_paths = [
             "apps/bombay/lib/bombay/schemas/space_settings_configuration_{:02d}_test.exs".format(i)
             for i in range(1, 13)
         ]
-        trace = _trace(12, 12, lang_paths=long_paths)
+        trace = _trace(12, 12, override_paths=long_paths)
         out = artifacts.skeleton("danger", trace)
         for line in out.splitlines():
             stripped = line
             for p in long_paths:
                 stripped = stripped.replace(p, "")
-            self.assertLessEqual(len(stripped), 100, repr(line))
+            self.assertLessEqual(len(stripped), 75, repr(line))
 
 
 class TestGuardBlockLineOrder(unittest.TestCase):
@@ -378,8 +385,8 @@ class TestGuardBlockLineOrder(unittest.TestCase):
     path lines above the intro line still passes every marker-prefix and
     presence check these tests otherwise run, and produces a well-formed
     marker-prefixed comment that `patch.py` will happily nail into the
-    user's source file -- with the intro's "confirm this still passes:"
-    colon pointing at nothing above it, and the path floating under the
+    user's source file -- with the intro's "confirm this passes:" colon
+    pointing at nothing above it, and the path floating under the
     KEEP line instead of under its own intro. That is exactly the durable,
     unreadable-in-review defect class this project ranks worst, so order
     is checked here with index comparisons on the split lines, not
@@ -392,8 +399,8 @@ class TestGuardBlockLineOrder(unittest.TestCase):
         out = artifacts.skeleton("danger", _trace(1, 1))
         self.assertEqual(out.splitlines(), [
             "# KEEP: hotfix: prevent double charge (#4127) (2026-08-20, a3f8c21)",
-            "# Before deleting, confirm this still passes (its name looks "
-            "like a test, not confirmed):",
+            "# Before deleting, confirm this passes (looks like a test, "
+            "not confirmed):",
             "#   t/case_01_test.py",
             "# If it is not a test, no test guards this: add one before "
             "touching it.",
@@ -407,19 +414,83 @@ class TestGuardBlockLineOrder(unittest.TestCase):
         out = artifacts.skeleton("danger", _trace(5, 30))
         lines = out.splitlines()
         intro_idx = lines.index(
-            "# Before deleting, confirm these still pass (names look "
-            "like tests, not confirmed):"
+            "# Before deleting, confirm these pass (look like tests, "
+            "not confirmed):"
         )
         path_idxs = [lines.index("#   t/case_{:02d}_test.py".format(i))
                      for i in (1, 2, 3)]
         tail_idx = lines.index("#   and at least 2 more")
         closing_idx = lines.index(
-            "# If none of these are tests, no test guards this: add one "
+            "# If none are tests, no test guards this: add one "
             "before touching it."
         )
         self.assertLess(intro_idx, min(path_idxs))
         self.assertLess(max(path_idxs), tail_idx)
         self.assertLess(tail_idx, closing_idx)
+
+
+# I3: which of `_STRINGS`' entries can end up as a line in a `danger`
+# skeleton's KEEP comment, and how that line is prefixed once it does.
+# `danger.no_marker` is deliberately absent: it is only ever appended when
+# `marker` is None, and `patch.py` already refuses a markerless file
+# before it would ever insert anything, so that line never reaches source
+# regardless of its own length. Every entry here does reach source, and
+# each is exercised with every data placeholder blanked to "" -- the same
+# stance this project takes on a path (a fact is never shortened to fit),
+# generalized to every other fact these lines can carry (a sha, a day, a
+# subject, a count): only the chrome this module itself writes is bounded
+# here.
+_DANGER_KEEP_LINE_ENTRIES = [
+    ("danger.keep", "marker", {"subject": "", "day": "", "sha": ""}),
+    ("danger.guard_intro", "marker", {}),
+    ("danger.guard_plural_intro", "marker", {}),
+    ("danger.guard_unverified", "marker", {}),
+    ("danger.guard_unverified_plural", "marker", {}),
+    ("danger.warning", "marker", {}),
+    ("guard.and_more", "guard", {"count": ""}),
+    ("guard.and_at_least_more", "guard", {"count": ""}),
+    ("guard.list_capped", "guard", {"listed": "", "total": ""}),
+    ("guard.list_capped_unknown", "guard", {}),
+]
+
+# The longest comment marker `scanner.COMMENT_MARKERS` knows about ("//",
+# "--"), used in place of a real one so this test bounds the worst case,
+# not just whichever marker a particular fixture happens to use.
+_WORST_MARKER = "x" * max(len(m) for m in scanner.COMMENT_MARKERS.values())
+_WORST_MARKER_PREFIX = _WORST_MARKER + " "
+_WORST_GUARD_PREFIX = _WORST_MARKER_PREFIX + "  "
+
+
+class TestKeepCommentProseLineLength(unittest.TestCase):
+    """I3: `docs/stability.md` used to blame an over-length KEEP comment
+    line on long repository paths alone. A real end-to-end run
+    (`tests/test_guard_capped_test_paths.py`) found the actual longest
+    line was this module's own prose, with a short path sitting right
+    next to it under the line limit. Fixing the doc's claim meant making
+    it true: every string this module can write into a danger skeleton's
+    KEEP comment is now kept to 75 characters or fewer once its own
+    prefix (comment marker, and for a guard sub-line, its extra two-space
+    indent) is included -- 75 so that even a 4-space file indent on top
+    of it stays under a linter's typical 79-column default.
+
+    Data-driven over `_STRINGS` itself (`_DANGER_KEEP_LINE_ENTRIES`), not
+    a list of literal rendered lines: a future key added to that table
+    without a length check is caught the same way `danger.guard_intro`,
+    `danger.guard_plural_intro` and `guard.list_capped_unknown` were
+    found over budget by the review that named this finding.
+    """
+
+    def test_every_entry_stays_within_the_prose_budget(self):
+        for lang in ("en", "ko"):
+            for key, prefix_kind, data_kwargs in _DANGER_KEEP_LINE_ENTRIES:
+                with self.subTest(lang=lang, key=key):
+                    if prefix_kind == "marker":
+                        rendered = artifacts._t(
+                            lang, key, marker=_WORST_MARKER_PREFIX, **data_kwargs)
+                    else:
+                        rendered = _WORST_GUARD_PREFIX + artifacts._t(
+                            lang, key, **data_kwargs)
+                    self.assertLessEqual(len(rendered), 75, repr(rendered))
 
 
 if __name__ == "__main__":

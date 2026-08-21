@@ -6,11 +6,14 @@ first candidate -- a 2020 commit unrelated to the target. `_top`'s
 before this fix it picked the chronologically oldest one anyway whenever
 `introduction_candidates` was non-empty, for any count at all.
 
-Both production call sites (`patch.py`, and `artifacts.py`'s own CLI) pass
-`evidence` from a verdict `verdict.validate` has already checked, so this
-gap never fires there; it only fires when a caller invokes `skeleton()`
-directly with no evidence at all, which is exactly what happened during
-the 0.9.2 field run this test reproduces.
+Neither production call site (`patch.py`, and `artifacts.py`'s own CLI)
+validates the verdict before reaching `skeleton()`: `patch.py` checks only
+`grade`, and `artifacts.py`'s CLI checks nothing at all. So this gap is
+live through both of them whenever the verdict they are handed never went
+through `verdict.validate`, not only when a caller invokes `skeleton()`
+directly -- the shipped CLI reproduces it with a two-file, one-command
+input (a verdict with a `grade` and no `evidence` at all). That is exactly
+what happened during the 0.9.2 field run this test reproduces.
 
 `_ambiguous_citation_text` is a distinct sentence pair from
 `_unresolved_citation_text`'s, not a reuse of it (see task-1-review's I1):
