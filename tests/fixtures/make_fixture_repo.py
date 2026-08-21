@@ -852,6 +852,23 @@ def build_binary_target(dest: str) -> dict:
     return {"repo": str(repo), "path": "blob.bin", "line": 1, "sha": sha}
 
 
+def build_undecodable_no_nul_target(dest: str) -> dict:
+    """A target path whose content at HEAD fails to decode as UTF-8 but
+    contains no NUL byte at all, for testing that trace.py's snippet
+    computation reaches its `"binary"` reason through the decode-failure
+    path specifically, not only through the NUL-byte check that runs
+    first (see `build_binary_target`, whose content trips the NUL check
+    before decoding is ever attempted). `0xff` is not a valid UTF-8
+    leading byte anywhere, and the content below has none of the NUL
+    bytes `build_binary_target`'s does.
+    """
+    repo = _init(dest, "undecodable_no_nul_target")
+    target = repo / "blob_no_nul.bin"
+    target.write_bytes(b"abc\xffdef\n")
+    sha = _commit(repo, "feat: add undecodable blob", "2021-01-01T10:00:00")
+    return {"repo": str(repo), "path": "blob_no_nul.bin", "line": 1, "sha": sha}
+
+
 def build_line_break_divergence(dest: str, *, name: str = "line_break_divergence",
                                  divergent: bytes = b"") -> dict:
     """A file with `divergent` bytes spliced between two short lines near
